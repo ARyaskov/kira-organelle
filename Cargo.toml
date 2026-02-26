@@ -1,0 +1,54 @@
+[package]
+name = "kira-organelle"
+description = "Deterministic aggregation and orchestration for the Kira organelle QC stack."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+repository = "https://github.com/ARyaskov/kira-organelle"
+keywords = [
+    "bioinformatics",
+    "oncology",
+    "quality-control",
+    "single-cell",
+    "organelle"
+]
+categories = [
+    "science",
+    "science::bioinformatics",
+    "command-line-utilities",
+    "algorithms"
+]
+
+[features]
+default = []
+strict-fsync = []
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+thiserror = "2.0"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "time", "ansi"] }
+flate2 = "1.1"
+kira-shared-sc-cache = "0.1"
+kira-mitoqc = "0.1"
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.16"
+
+[[bench]]
+name = "tsv_ingest"
+harness = false
+
+[[bench]]
+name = "cell_delta"
+harness = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

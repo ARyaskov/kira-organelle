@@ -67,6 +67,59 @@ fn binary_fallback_mock() {
 }
 
 #[test]
+fn binary_step_passes_assets_to_mitoqc() {
+    let dir = tempdir().expect("tempdir");
+    let input = dir.path().join("input");
+    let out = dir.path().join("kira-mitoqc");
+    let bin_dir = dir.path().join("bin");
+    let assets_dir = bin_dir.join("assets");
+    let args_log = dir.path().join("args-mito.txt");
+    fs::create_dir_all(&input).expect("mkdir input");
+    fs::create_dir_all(&out).expect("mkdir out");
+    fs::create_dir_all(&assets_dir).expect("mkdir assets");
+
+    let script = bin_dir.join("fake-kira-mitoqc.sh");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nset -e\nprintf '%s\\n' \"$@\" > \"{}\"\n",
+            args_log.display()
+        ),
+    )
+    .expect("write script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&script).expect("meta").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod");
+    }
+
+    let step = ToolStep {
+        tool: "kira-mitoqc".to_string(),
+        input,
+        out_dir: out,
+        threads: Some(2),
+        cache_path: None,
+        mode: ToolInvocationMode::Binary(script),
+    };
+
+    let result = execute_step(&step);
+    assert!(result.success, "binary step failed: {}", result.message);
+
+    let args = fs::read_to_string(args_log).expect("read args");
+    assert!(
+        args.contains("--assets"),
+        "missing --assets in args: {args}"
+    );
+    assert!(
+        args.contains(&assets_dir.display().to_string()),
+        "missing assets path in args: {args}"
+    );
+}
+
+#[test]
 fn binary_step_passes_cache_to_nuclearqc() {
     let dir = tempdir().expect("tempdir");
     let input = dir.path().join("input");

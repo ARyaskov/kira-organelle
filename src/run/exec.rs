@@ -465,7 +465,7 @@ fn execute_binary_step(step: &ToolStep, path: &std::path::Path) -> ToolResult {
         // Some tools load assets via relative paths, so run from the binary directory.
         cmd.current_dir(dir);
     }
-    let args = match build_tool_args(step) {
+    let args = match build_tool_args(step, path) {
         Ok(v) => v,
         Err(e) => {
             return ToolResult {
@@ -508,7 +508,7 @@ fn execute_binary_step(step: &ToolStep, path: &std::path::Path) -> ToolResult {
     }
 }
 
-fn build_tool_args(step: &ToolStep) -> Result<Vec<String>, String> {
+fn build_tool_args(step: &ToolStep, bin_path: &Path) -> Result<Vec<String>, String> {
     let cwd = std::env::current_dir().ok();
     let input = absolutize_from_cwd(&step.input, cwd.as_deref());
     let out_dir = absolutize_from_cwd(&step.out_dir, cwd.as_deref());
@@ -553,7 +553,7 @@ fn build_tool_args(step: &ToolStep) -> Result<Vec<String>, String> {
             "--resources".to_string(),
             resources.resources_dir.display().to_string(),
             "--lr-profile".to_string(),
-            resources.lr_profile.display().to_string(),
+            resources.lr_profile.clone(),
             "--out".to_string(),
             out_dir.display().to_string(),
         ];
@@ -602,6 +602,15 @@ fn build_tool_args(step: &ToolStep) -> Result<Vec<String>, String> {
                 args.push("--threads".to_string());
                 args.push(n.to_string());
             }
+            if let Some(assets_dir) = resolve_mitoqc_assets_dir(bin_path) {
+                args.push("--assets".to_string());
+                args.push(assets_dir.display().to_string());
+            }
+            if step.cache_path.is_some() {
+                // kira-mitoqc interprets --cache as a directory for expr.bin, not a shared-cache file path.
+                args.push("--cache".to_string());
+                args.push(out_dir.display().to_string());
+            }
         }
         "kira-spliceqc" | "kira-proteoqc" => {
             if let Some(n) = step.threads {
@@ -618,7 +627,7 @@ fn build_tool_args(step: &ToolStep) -> Result<Vec<String>, String> {
         }
     }
 
-    if supports_cache_arg(&step.tool) && step.cache_path.is_some() {
+    if supports_cache_arg(&step.tool) && step.cache_path.is_some() && step.tool != "kira-mitoqc" {
         let cache = step.cache_path.as_ref().expect("checked is_some");
         args.push("--cache".to_string());
         args.push(
@@ -629,6 +638,42 @@ fn build_tool_args(step: &ToolStep) -> Result<Vec<String>, String> {
     }
 
     Ok(args)
+}
+
+fn resolve_mitoqc_assets_dir(bin_path: &Path) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("KIRA_ORGANELLE_MITOQC_ASSETS").map(PathBuf::from)
+        && p.is_dir()
+    {
+        return Some(p);
+    }
+
+    if let Some(bin_dir) = bin_path.parent() {
+        let direct = bin_dir.join("assets");
+        if direct.is_dir() {
+            return Some(direct);
+        }
+        for ancestor in bin_dir.ancestors() {
+            let candidate = ancestor.join("assets");
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let cwd_assets = cwd.join("assets");
+        if cwd_assets.is_dir() {
+            return Some(cwd_assets);
+        }
+        for ancestor in cwd.ancestors() {
+            let candidate = ancestor.join("kira-mitoqc").join("assets");
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
 }
 
 fn resolve_microenvironment_expr_path(input: &Path, out_dir: &Path, cache: &Path) -> PathBuf {
@@ -991,7 +1036,7 @@ struct MicroenvironmentAutoGroupsPaths {
 
 struct MicroenvironmentResources {
     resources_dir: PathBuf,
-    lr_profile: PathBuf,
+    lr_profile: String,
     auto_groups: Option<MicroenvironmentAutoGroupsPaths>,
 }
 
@@ -1004,36 +1049,24 @@ fn resolve_microenvironment_resource_paths() -> Result<MicroenvironmentResources
                 .to_string()
         })?;
 
-    let resources_dir = {
-        let onco = root.join("resources_onco");
-        if onco.is_dir() {
-            onco
-        } else {
-            root.join("resources")
-        }
-    };
+    let resources_candidates = [root.join("resources_onco"), root.join("resources")];
+    let resources_dir = resources_candidates
+        .iter()
+        .find(|p| p.is_dir())
+        .cloned()
+        .unwrap_or_else(|| root.join("resources"));
 
     let lr_profile = {
         let onco = root.join("resources").join("lr_pairs_mvp_onco.tsv");
+        let full = root.join("resources").join("lr_pairs.tsv");
         if onco.is_file() {
-            onco
+            onco.display().to_string()
+        } else if full.is_file() {
+            full.display().to_string()
         } else {
-            root.join("resources").join("lr_pairs.tsv")
+            "mvp".to_string()
         }
     };
-
-    if !resources_dir.is_dir() {
-        return Err(format!(
-            "kira-microenvironment resources directory not found: {}",
-            resources_dir.display()
-        ));
-    }
-    if !lr_profile.is_file() {
-        return Err(format!(
-            "kira-microenvironment lr profile not found: {}",
-            lr_profile.display()
-        ));
-    }
 
     let force_secretion_groups = std::env::var_os("KIRA_MICROENV_FORCE_SECRETION_GROUPS")
         .map(|v| {

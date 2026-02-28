@@ -137,3 +137,28 @@ fn run_layout_created() {
         assert!(step.out_dir.is_dir(), "missing dir for {}", step.tool);
     }
 }
+
+#[test]
+fn default_cache_path_is_input_root() {
+    let dir = tempdir().expect("tempdir");
+    let input = dir.path().join("input");
+    fs::create_dir_all(&input).expect("mkdir input");
+    let args = RunArgs {
+        input: input.clone(),
+        integration_manifest: None,
+        out: Some(dir.path().join("out")),
+        threads: None,
+        no_cache: false,
+        strict: false,
+        dry_run: false,
+        fii_weights: None,
+    };
+
+    let plan = build_execution_plan(&args);
+    for step in &plan.steps {
+        assert_eq!(
+            step.cache_path.as_deref(),
+            Some(input.join("kira-organelle.bin").as_path())
+        );
+    }
+}

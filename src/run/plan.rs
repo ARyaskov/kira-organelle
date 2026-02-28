@@ -43,7 +43,12 @@ pub fn build_execution_plan(args: &RunArgs) -> ExecutionPlan {
     let cache_path = if args.no_cache {
         None
     } else {
-        Some(out_root.join("kira-organelle.bin"))
+        let input_root = if args.input.is_file() {
+            args.input.parent().unwrap_or(&args.input)
+        } else {
+            &args.input
+        };
+        Some(input_root.join("kira-organelle.bin"))
     };
 
     let mut steps = Vec::new();

@@ -65,7 +65,7 @@ Then it invokes internal `aggregate` to generate final outputs under `./out/kira
 When `--integration-manifest` is provided, `integration/timeseries.tsv` follows manifest `order` / `timepoint`.
 
 Shared cache behavior:
-- default cache path: `<out>/kira-organelle.bin`
+- default cache path: `<input>/kira-organelle.bin`
 - propagated to all tool invocations in `run` mode as `--cache <path>`
 - disabled with `--no-cache`
 

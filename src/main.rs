@@ -18,6 +18,7 @@ fn main() {
                 },
                 None => None,
             };
+            kira_organelle::set_write_cells_json_enabled(args.write_cells_json);
             let opts = kira_organelle::AggregateOptions {
                 input: args.input,
                 input_b: args.input_b,
@@ -26,7 +27,9 @@ fn main() {
                 json: args.json,
                 validate_only: args.validate_only,
                 fii_weights,
+                export_systems_model: args.export_systems_model,
             };
+            kira_organelle::set_profile_stages_enabled(args.profile_stages);
             if let Err(err) = kira_organelle::run_aggregate(&opts) {
                 let kind = kira_organelle::error::classify_error_message(&err);
                 let code = kira_organelle::error::stable_error_code(kind);
@@ -35,6 +38,7 @@ fn main() {
             }
         }
         Commands::Run(args) => {
+            kira_organelle::set_write_cells_json_enabled(args.write_cells_json);
             if let Err(err) = kira_organelle::run_run_command(&args) {
                 let kind = kira_organelle::error::classify_error_message(&err);
                 let code = kira_organelle::error::stable_error_code(kind);

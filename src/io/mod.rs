@@ -5,6 +5,7 @@ use std::path::Path;
 use serde_json::Value;
 
 pub const DETERMINISTIC_TIMESTAMP_RFC3339: &str = "1970-01-01T00:00:00Z";
+const CANONICAL_EPS: f64 = 1e-12;
 
 pub fn now_rfc3339_utc() -> String {
     let now = time::OffsetDateTime::now_utc();
@@ -14,6 +15,22 @@ pub fn now_rfc3339_utc() -> String {
 
 pub fn deterministic_rfc3339_utc() -> String {
     DETERMINISTIC_TIMESTAMP_RFC3339.to_string()
+}
+
+pub fn canonicalize_f32(x: f32) -> f32 {
+    if x == 0.0 || (x as f64).abs() < CANONICAL_EPS {
+        0.0
+    } else {
+        x
+    }
+}
+
+pub fn canonicalize_f64(x: f64) -> f64 {
+    if x == 0.0 || x.abs() < CANONICAL_EPS {
+        0.0
+    } else {
+        x
+    }
 }
 
 pub fn write_json_atomic(path: &Path, value: &Value) -> Result<(), std::io::Error> {

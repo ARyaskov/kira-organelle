@@ -24,6 +24,7 @@ fn html_single_input_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     };
 
     run_aggregate(&opts).expect("first");
@@ -63,6 +64,7 @@ fn html_comparison_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     };
 
     run_aggregate(&opts).expect("first");
@@ -95,6 +97,7 @@ fn html_contains_expected_sections() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -150,6 +153,7 @@ fn llm_report_deterministic_and_contains_tools() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     };
 
     run_aggregate(&opts).expect("first");
@@ -197,6 +201,7 @@ fn llm_report_suppressed_when_confidence_low() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -243,6 +248,7 @@ fn full_pipeline_layout_fail_fast_on_invalid_bundle() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect_err("must fail-fast");
 
@@ -291,6 +297,7 @@ fn partial_pipeline_layout_still_fail_fast_when_contract_invalid() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect_err("must fail-fast");
 

@@ -135,6 +135,8 @@ fn build_synthetic_cells(n: usize, coupled: bool, zero_variance: bool) -> CellsS
                 ],
             },
         ],
+        ingestion_diagnostics: vec![],
+        normalization_context: None,
         cells,
         issues: vec![],
     }

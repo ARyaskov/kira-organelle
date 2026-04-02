@@ -4,10 +4,11 @@ use crate::cli::RunArgs;
 
 use super::tool::{ToolInvocationMode, resolve_tool_invocation};
 
-pub const PIPELINE_ORDER: [&str; 8] = [
+pub const PIPELINE_ORDER: [&str; 9] = [
     "kira-mitoqc",
     "kira-nuclearqc",
     "kira-spliceqc",
+    "kira-riboqc",
     "kira-proteoqc",
     "kira-autolys",
     "kira-secretion",

@@ -158,6 +158,7 @@ fn backward_compat_without_decision_invoked() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
     assert!(!out.join("sample_decision.tsv").exists());

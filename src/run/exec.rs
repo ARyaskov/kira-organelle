@@ -39,81 +39,279 @@ pub fn prepare_layout(plan: &ExecutionPlan) -> Result<(), String> {
     Ok(())
 }
 
-pub fn execute_plan(plan: &ExecutionPlan, strict: bool) -> Result<Vec<Issue>, String> {
+pub fn execute_plan(
+    plan: &ExecutionPlan,
+    strict: bool,
+    mitoqc_write_profile_json: bool,
+) -> Result<Vec<Issue>, String> {
     prepare_layout(plan)?;
     let mut issues = Vec::new();
-    let mut shared_cache_bin_for_downstream = prepare_pipeline_shared_cache(plan)?;
+    let shared_cache_bin_for_downstream = prepare_pipeline_shared_cache(plan)?;
     let mut expr_cache_for_microenvironment: Option<PathBuf> = None;
+    let mut parallel_steps = Vec::new();
+    let mut energetics_step = None;
+    let mut microenvironment_step = None;
 
     for step in &plan.steps {
-        let mut exec_step = step.clone();
-        if tool_uses_pipeline_root_out(&exec_step.tool) {
-            exec_step.out_dir = plan.out_root.clone();
-        }
-        if step.tool == "kira-microenvironment" {
-            exec_step.cache_path = expr_cache_for_microenvironment.clone();
-        } else {
-            exec_step.cache_path = if supports_cache_arg(&step.tool) {
-                shared_cache_bin_for_downstream.clone()
-            } else {
-                None
-            };
-        }
-
-        let started = Instant::now();
-        info!(tool = %exec_step.tool, mode = %mode_string(&exec_step.mode), "tool step started");
-        let result = execute_step(&exec_step);
-        let elapsed = started.elapsed();
-
-        if result.success {
-            info!(tool = %exec_step.tool, duration_ms = elapsed.as_millis() as u64, "tool step succeeded");
-            if exec_step.tool == "kira-mitoqc" {
-                let expr_cache = resolve_expression_cache_path(
-                    &exec_step.input,
+        match classify_tool_wave(&step.tool) {
+            ToolWave::MitoQc => {
+                let exec_step = build_exec_step(
+                    step,
                     &plan.out_root,
-                    &exec_step.out_dir,
-                )?;
-                if let Some(resolved) = shared_cache_bin_for_downstream.as_ref() {
-                    info!(
-                        tool = %exec_step.tool,
-                        shared_cache = %resolved.display(),
-                        "using shared cache for downstream pipeline tools"
-                    );
-                }
-                info!(
-                    tool = %exec_step.tool,
-                    expression_cache = %expr_cache.display(),
-                    "resolved expression cache for microenvironment stage"
+                    shared_cache_bin_for_downstream.clone(),
+                    expr_cache_for_microenvironment.clone(),
                 );
-                expr_cache_for_microenvironment = Some(expr_cache);
+                let outcome = run_one_step(step, exec_step, !mitoqc_write_profile_json);
+                if !record_step_outcome(&outcome, strict, &mut issues) {
+                    return Err(format!("strict mode: tool '{}' failed", step.tool));
+                }
+
+                if step.tool == "kira-mitoqc" && outcome.result.success {
+                    let expr_cache = resolve_expression_cache_path(
+                        &outcome.executed_step.input,
+                        &plan.out_root,
+                        &outcome.executed_step.out_dir,
+                    )?;
+                    if let Some(resolved) = shared_cache_bin_for_downstream.as_ref() {
+                        info!(
+                            tool = %outcome.executed_step.tool,
+                            shared_cache = %resolved.display(),
+                            "using shared cache for downstream pipeline tools"
+                        );
+                    }
+                    info!(
+                        tool = %outcome.executed_step.tool,
+                        expression_cache = %expr_cache.display(),
+                        "resolved expression cache for microenvironment stage"
+                    );
+                    expr_cache_for_microenvironment = Some(expr_cache);
+                }
             }
-            continue;
+            ToolWave::ParallelCore => parallel_steps.push(step.clone()),
+            ToolWave::Energetics => energetics_step = Some(step.clone()),
+            ToolWave::Microenvironment => microenvironment_step = Some(step.clone()),
         }
+    }
 
-        warn!(
-            tool = %step.tool,
-            duration_ms = elapsed.as_millis() as u64,
-            error = %result.message,
-            "tool step failed"
+    let mut parallel_outcomes = run_parallel_steps(
+        &parallel_steps,
+        &plan.out_root,
+        shared_cache_bin_for_downstream.clone(),
+        !mitoqc_write_profile_json,
+    );
+    for outcome in parallel_outcomes.drain(..) {
+        if !record_step_outcome(&outcome, strict, &mut issues) {
+            return Err(format!(
+                "strict mode: tool '{}' failed",
+                outcome.plan_step.tool
+            ));
+        }
+    }
+
+    if let Some(step) = energetics_step {
+        let exec_step = build_exec_step(
+            &step,
+            &plan.out_root,
+            shared_cache_bin_for_downstream.clone(),
+            expr_cache_for_microenvironment.clone(),
         );
-        issues.push(Issue {
-            severity: if strict {
-                Severity::Error
-            } else {
-                Severity::Warn
-            },
-            tool: Some(step.tool.clone()),
-            code: "TOOL_EXECUTION_FAILED".to_string(),
-            message: result.message.clone(),
-            path: Some(step.out_dir.display().to_string()),
-        });
+        let outcome = run_one_step(&step, exec_step, !mitoqc_write_profile_json);
+        if !record_step_outcome(&outcome, strict, &mut issues) {
+            return Err(format!("strict mode: tool '{}' failed", step.tool));
+        }
+    }
 
-        if strict {
+    if let Some(step) = microenvironment_step {
+        let exec_step = build_exec_step(
+            &step,
+            &plan.out_root,
+            shared_cache_bin_for_downstream.clone(),
+            expr_cache_for_microenvironment.clone(),
+        );
+        let outcome = run_one_step(&step, exec_step, !mitoqc_write_profile_json);
+        if !record_step_outcome(&outcome, strict, &mut issues) {
             return Err(format!("strict mode: tool '{}' failed", step.tool));
         }
     }
 
     Ok(issues)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolWave {
+    MitoQc,
+    ParallelCore,
+    Energetics,
+    Microenvironment,
+}
+
+fn classify_tool_wave(tool: &str) -> ToolWave {
+    match tool {
+        "kira-mitoqc" => ToolWave::MitoQc,
+        "kira-energetics" => ToolWave::Energetics,
+        "kira-microenvironment" => ToolWave::Microenvironment,
+        _ => ToolWave::ParallelCore,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StepOutcome {
+    plan_step: ToolStep,
+    executed_step: ToolStep,
+    result: ToolResult,
+    elapsed_ms: u64,
+}
+
+fn build_exec_step(
+    step: &ToolStep,
+    out_root: &Path,
+    shared_cache_bin_for_downstream: Option<PathBuf>,
+    expr_cache_for_microenvironment: Option<PathBuf>,
+) -> ToolStep {
+    let mut exec_step = step.clone();
+    if tool_uses_pipeline_root_out(&exec_step.tool) {
+        exec_step.out_dir = out_root.to_path_buf();
+    }
+    if step.tool == "kira-microenvironment" {
+        exec_step.cache_path = expr_cache_for_microenvironment;
+    } else {
+        exec_step.cache_path = if supports_cache_arg(&step.tool) {
+            shared_cache_bin_for_downstream
+        } else {
+            None
+        };
+    }
+    exec_step
+}
+
+fn run_one_step(
+    plan_step: &ToolStep,
+    exec_step: ToolStep,
+    sink_mito_profile_json: bool,
+) -> StepOutcome {
+    let started = Instant::now();
+    info!(
+        tool = %exec_step.tool,
+        mode = %mode_string(&exec_step.mode),
+        "tool step started"
+    );
+    if exec_step.tool == "kira-mitoqc"
+        && sink_mito_profile_json
+        && let Err(err) = maybe_sink_mito_profile_json(&exec_step.out_dir)
+    {
+        warn!(
+            tool = %exec_step.tool,
+            out = %exec_step.out_dir.display(),
+            error = %err,
+            "failed to prepare mitochondrial_profile.json sink; continuing with normal write"
+        );
+    }
+    let result = execute_step(&exec_step);
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    StepOutcome {
+        plan_step: plan_step.clone(),
+        executed_step: exec_step,
+        result,
+        elapsed_ms,
+    }
+}
+
+fn run_parallel_steps(
+    steps: &[ToolStep],
+    out_root: &Path,
+    shared_cache_bin_for_downstream: Option<PathBuf>,
+    sink_mito_profile_json: bool,
+) -> Vec<StepOutcome> {
+    let mut handles = Vec::with_capacity(steps.len());
+    for step in steps {
+        let plan_step = step.clone();
+        let exec_step = build_exec_step(
+            step,
+            out_root,
+            shared_cache_bin_for_downstream.clone(),
+            None,
+        );
+        handles.push(std::thread::spawn(move || {
+            match std::panic::catch_unwind(|| {
+                run_one_step(&plan_step, exec_step.clone(), sink_mito_profile_json)
+            }) {
+                Ok(outcome) => outcome,
+                Err(_) => StepOutcome {
+                    plan_step: plan_step.clone(),
+                    executed_step: exec_step,
+                    result: ToolResult {
+                        tool: plan_step.tool.clone(),
+                        success: false,
+                        message: "parallel step panicked".to_string(),
+                    },
+                    elapsed_ms: 0,
+                },
+            }
+        }));
+    }
+
+    let mut outcomes = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.join() {
+            Ok(outcome) => outcomes.push(outcome),
+            Err(_) => outcomes.push(StepOutcome {
+                plan_step: ToolStep {
+                    tool: "parallel-core".to_string(),
+                    input: PathBuf::new(),
+                    out_dir: PathBuf::new(),
+                    threads: None,
+                    cache_path: None,
+                    mode: ToolInvocationMode::Unavailable,
+                },
+                executed_step: ToolStep {
+                    tool: "parallel-core".to_string(),
+                    input: PathBuf::new(),
+                    out_dir: PathBuf::new(),
+                    threads: None,
+                    cache_path: None,
+                    mode: ToolInvocationMode::Unavailable,
+                },
+                result: ToolResult {
+                    tool: "parallel-core".to_string(),
+                    success: false,
+                    message: "parallel step join failed".to_string(),
+                },
+                elapsed_ms: 0,
+            }),
+        }
+    }
+    outcomes
+}
+
+fn record_step_outcome(outcome: &StepOutcome, strict: bool, issues: &mut Vec<Issue>) -> bool {
+    if outcome.result.success {
+        info!(
+            tool = %outcome.executed_step.tool,
+            duration_ms = outcome.elapsed_ms,
+            "tool step succeeded"
+        );
+        return true;
+    }
+
+    warn!(
+        tool = %outcome.plan_step.tool,
+        duration_ms = outcome.elapsed_ms,
+        error = %outcome.result.message,
+        "tool step failed"
+    );
+    issues.push(Issue {
+        severity: if strict {
+            Severity::Error
+        } else {
+            Severity::Warn
+        },
+        tool: Some(outcome.plan_step.tool.clone()),
+        code: "TOOL_EXECUTION_FAILED".to_string(),
+        message: outcome.result.message.clone(),
+        path: Some(outcome.plan_step.out_dir.display().to_string()),
+    });
+
+    !strict
 }
 
 fn prepare_pipeline_shared_cache(plan: &ExecutionPlan) -> Result<Option<PathBuf>, String> {
@@ -253,6 +451,7 @@ fn tool_uses_pipeline_root_out(tool: &str) -> bool {
         tool,
         "kira-nuclearqc"
             | "kira-spliceqc"
+            | "kira-riboqc"
             | "kira-proteoqc"
             | "kira-autolys"
             | "kira-secretion"
@@ -378,6 +577,24 @@ fn resolve_expression_cache_path(
     out_root: &Path,
     mito_out_dir: &Path,
 ) -> Result<PathBuf, String> {
+    let input_root = if input.is_file() {
+        input.parent().unwrap_or(input)
+    } else {
+        input
+    };
+
+    for candidate in [
+        input_root.join("expr.bin"),
+        out_root.join("expr.bin"),
+        mito_out_dir.join("expr.bin"),
+        out_root.join("kira-organelle.bin").join("expr.bin"),
+        mito_out_dir.join("kira-organelle.bin").join("expr.bin"),
+    ] {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
     resolve_shared_cache_path(input, out_root, mito_out_dir)
 }
 
@@ -512,6 +729,7 @@ fn build_tool_args(step: &ToolStep, bin_path: &Path) -> Result<Vec<String>, Stri
     let cwd = std::env::current_dir().ok();
     let input = absolutize_from_cwd(&step.input, cwd.as_deref());
     let out_dir = absolutize_from_cwd(&step.out_dir, cwd.as_deref());
+    let tool_out_dir = out_dir.clone();
     let tool_input = if step.tool == "kira-mitoqc" {
         input.clone()
     } else if input.is_file() {
@@ -588,7 +806,7 @@ fn build_tool_args(step: &ToolStep, bin_path: &Path) -> Result<Vec<String>, Stri
     args.push("--input".to_string());
     args.push(tool_input.display().to_string());
     args.push("--out".to_string());
-    args.push(out_dir.display().to_string());
+    args.push(tool_out_dir.display().to_string());
 
     // Keep mode explicit for compatibility across tools where it is required.
     args.push("--mode".to_string());
@@ -611,6 +829,8 @@ fn build_tool_args(step: &ToolStep, bin_path: &Path) -> Result<Vec<String>, Stri
                 args.push("--cache".to_string());
                 args.push(out_dir.display().to_string());
             }
+            // Enable additive redox extension by default in pipeline mode.
+            args.push("--redox".to_string());
         }
         "kira-spliceqc" | "kira-proteoqc" => {
             if let Some(n) = step.threads {
@@ -1130,5 +1350,82 @@ fn mode_string(mode: &ToolInvocationMode) -> &'static str {
         ToolInvocationMode::Library => "library",
         ToolInvocationMode::Binary(_) => "binary",
         ToolInvocationMode::Unavailable => "unavailable",
+    }
+}
+
+fn maybe_sink_mito_profile_json(out_dir: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let target = out_dir.join("mitochondrial_profile.json");
+        if let Ok(meta) = std::fs::symlink_metadata(&target) {
+            if meta.file_type().is_symlink() || meta.is_file() {
+                std::fs::remove_file(&target)
+                    .map_err(|e| format!("failed removing existing {}: {e}", target.display()))?;
+            }
+        }
+        std::os::unix::fs::symlink("/dev/null", &target)
+            .map_err(|e| format!("failed linking {} -> /dev/null: {e}", target.display()))?;
+        return Ok(());
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = out_dir;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::build_tool_args;
+    use crate::run::plan::ToolStep;
+    use crate::run::tool::ToolInvocationMode;
+
+    fn step(tool: &str, out_dir: &str) -> ToolStep {
+        ToolStep {
+            tool: tool.to_string(),
+            input: PathBuf::from("/tmp/input"),
+            out_dir: PathBuf::from(out_dir),
+            threads: None,
+            cache_path: None,
+            mode: ToolInvocationMode::Unavailable,
+        }
+    }
+
+    #[test]
+    fn build_tool_args_riboqc_keeps_step_out() {
+        let step = step("kira-riboqc", "/tmp/out/kira-riboqc");
+        let args =
+            build_tool_args(&step, PathBuf::from("/tmp/bin/kira-riboqc").as_path()).expect("args");
+        let out_idx = args
+            .iter()
+            .position(|v| v == "--out")
+            .expect("out flag present");
+        assert_eq!(args[out_idx + 1], "/tmp/out/kira-riboqc");
+    }
+
+    #[test]
+    fn build_tool_args_riboqc_keeps_root_out_when_already_root() {
+        let step = step("kira-riboqc", "/tmp/out");
+        let args =
+            build_tool_args(&step, PathBuf::from("/tmp/bin/kira-riboqc").as_path()).expect("args");
+        let out_idx = args
+            .iter()
+            .position(|v| v == "--out")
+            .expect("out flag present");
+        assert_eq!(args[out_idx + 1], "/tmp/out");
+    }
+
+    #[test]
+    fn build_tool_args_non_riboqc_keeps_step_out() {
+        let step = step("kira-proteoqc", "/tmp/out/kira-proteoqc");
+        let args = build_tool_args(&step, PathBuf::from("/tmp/bin/kira-proteoqc").as_path())
+            .expect("args");
+        let out_idx = args
+            .iter()
+            .position(|v| v == "--out")
+            .expect("out flag present");
+        assert_eq!(args[out_idx + 1], "/tmp/out/kira-proteoqc");
     }
 }

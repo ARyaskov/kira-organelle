@@ -149,6 +149,7 @@ fn backward_compatibility_not_invoked() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
     assert!(!out.join("commitment_asymmetry.tsv").exists());

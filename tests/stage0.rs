@@ -91,6 +91,7 @@ fn state_json_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     };
 
     run_aggregate(&opts).expect("first run");

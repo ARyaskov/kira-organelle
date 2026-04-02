@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 use crate::contracts::types::{Issue, Severity};
 use crate::fii::FiiSummary;
 use crate::model::organelle::OrganelleId;
+use crate::normalize::global_robust::GlobalNormalizationSummary;
 
 pub const STATE_SCHEMA_V1: &str = "kira-organelle-state-v1";
 
@@ -54,6 +55,10 @@ pub struct AggregatedState {
     pub stress_localization: Option<StressLocalization>,
     #[serde(default)]
     pub functional_irreversibility: Option<FiiSummary>,
+    #[serde(default)]
+    pub systems_state_model: Option<SystemsStateModelPlaceholder>,
+    #[serde(default)]
+    pub global_normalization: Option<GlobalNormalizationSummary>,
     pub issues: Vec<Issue>,
     pub timestamp: String,
 }
@@ -70,6 +75,11 @@ pub struct StressLocalization {
     pub rho_internal_external: f64,
     pub rho_internal_fragility: f64,
     pub gating: StressLocalizationGating,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemsStateModelPlaceholder {
+    pub model_version: String,
 }
 
 impl AggregatedState {
@@ -142,6 +152,30 @@ impl AggregatedState {
             }
             None => {
                 root.insert("functional_irreversibility".to_string(), Value::Null);
+            }
+        }
+
+        match &self.systems_state_model {
+            Some(v) => {
+                root.insert(
+                    "systems_state_model".to_string(),
+                    serde_json::to_value(v).unwrap_or(Value::Null),
+                );
+            }
+            None => {
+                root.insert("systems_state_model".to_string(), Value::Null);
+            }
+        }
+
+        match &self.global_normalization {
+            Some(v) => {
+                root.insert(
+                    "global_normalization".to_string(),
+                    serde_json::to_value(v).unwrap_or(Value::Null),
+                );
+            }
+            None => {
+                root.insert("global_normalization".to_string(), Value::Null);
             }
         }
 

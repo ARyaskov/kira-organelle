@@ -19,6 +19,7 @@ fn fii_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: Some(FiiWeights::default()),
+        export_systems_model: None,
     };
     run_aggregate(&opts).expect("first");
     let first = fs::read(out.join("functional_irreversibility_index.tsv")).expect("read first");
@@ -47,6 +48,7 @@ fn fii_weight_variation_changes_score() {
             translation: 0.0,
             splice: 0.0,
         }),
+        export_systems_model: None,
     })
     .expect("aggregate a");
     run_aggregate(&AggregateOptions {
@@ -61,6 +63,7 @@ fn fii_weight_variation_changes_score() {
             translation: 1.0,
             splice: 0.0,
         }),
+        export_systems_model: None,
     })
     .expect("aggregate b");
 
@@ -99,6 +102,7 @@ fn fii_regime_boundaries() {
         json: true,
         validate_only: false,
         fii_weights: Some(FiiWeights::default()),
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -134,6 +138,7 @@ fn fii_low_confidence_when_inputs_missing() {
         json: true,
         validate_only: false,
         fii_weights: Some(FiiWeights::default()),
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -165,6 +170,7 @@ fn fii_disabled_keeps_legacy_artifacts() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 

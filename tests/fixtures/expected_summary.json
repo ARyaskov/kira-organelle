@@ -1,0 +1,384 @@
+{
+  "schema": "kira-organelle-integration-v1",
+  "model": {
+    "engine": "kira-organelle",
+    "model_version": "2.0.0",
+    "normalization": "median_mad_v1",
+    "composites_version": "systems_v1",
+    "fragility_version": "fdiff_v1"
+  },
+  "entity": "snapshot_input",
+  "timepoint": 0,
+  "axes": {
+    "mito": 0.7,
+    "proteostasis": 0.4,
+    "splice": 0.0,
+    "secretion": 0.0,
+    "energetics": 0.0,
+    "autophagy": 0.0
+  },
+  "collapse_proximity_baseline": 0.2564996020383392,
+  "collapse_proximity_peak": 0.2564996020383392,
+  "expression_available": true,
+  "expression_source": "organelle_axes_proxy",
+  "systems_state_model": {
+    "global_stats": {
+      "n_cells": 2,
+      "cpi_p50": 0.0,
+      "cpi_p90": 0.0,
+      "stress_p50": 0.0,
+      "stress_p90": 0.0,
+      "system_entropy": 0.0,
+      "normalized_entropy": 0.0,
+      "rare_fraction": 0.0
+    },
+    "cluster_stats": {
+      "all_cells": {
+        "n_cells": 2,
+        "median_cpi": 0.0,
+        "median_stress": 0.0,
+        "heterogeneity_index": 1.0,
+        "tail_fraction_cpi": 1.0,
+        "tail_fraction_stress": 1.0,
+        "rare_fraction": 0.0,
+        "regime_fraction": {
+          "BaselineCompensated": 1.0
+        },
+        "metrics": {
+          "AFS": {
+            "median": 0.0,
+            "p10": 0.0,
+            "p90": 0.0,
+            "mad": 0.0
+          },
+          "CPI": {
+            "median": 0.0,
+            "p10": 0.0,
+            "p90": 0.0,
+            "mad": 0.0
+          },
+          "CompensationDeficit": {
+            "median": 0.0,
+            "p10": 0.0,
+            "p90": 0.0,
+            "mad": 0.0
+          },
+          "IMSC": {
+            "median": 0.0,
+            "p10": 0.0,
+            "p90": 0.0,
+            "mad": 0.0
+          },
+          "StressVector": {
+            "median": 0.0,
+            "p10": 0.0,
+            "p90": 0.0,
+            "mad": 0.0
+          }
+        }
+      }
+    },
+    "regime_distribution": {
+      "counts": {
+        "BaselineCompensated": 2
+      },
+      "fractions": {
+        "BaselineCompensated": 1.0
+      }
+    },
+    "global_cpi_p50": 0.0,
+    "global_cpi_p90": 0.0,
+    "global_stress_p50": 0.0,
+    "global_stress_p90": 0.0,
+    "rare_fraction_global": 0.0,
+    "fragility": {
+      "delta": 0.25,
+      "global_axis_ranking": [],
+      "cluster_axis_ranking": {
+        "all_cells": []
+      }
+    },
+    "therapeutic_projection": {
+      "cluster_rankings": {
+        "all_cells": []
+      },
+      "global_axis_ranking": [],
+      "top_combinations": {
+        "all_cells": []
+      }
+    },
+    "dynamic_stability": {
+      "mean_lsi": 1.0,
+      "global_sci_system": 0.0,
+      "basin_robustness": []
+    },
+    "validation": {
+      "invariants": {
+        "total_checks": 6,
+        "violations": 0,
+        "violation_examples": []
+      },
+      "robustness_index": 1.0,
+      "effective_degrees_of_freedom": 0,
+      "condition_number": 0.0,
+      "biological_constraints": {
+        "correlations": {
+          "C1_OSL_PCP_nonnegative": 0.0,
+          "C2_HSI_ISS_nonnegative": 0.0,
+          "C3_TSM_CCI_nonnegative": 0.0
+        },
+        "violations": []
+      },
+      "sensitivity_stability_index": 1.0,
+      "overparameterization_flag": false
+    },
+    "compatibility": {
+      "missing_metrics": [],
+      "degraded_axes": [
+        "RSS",
+        "SII",
+        "OSL",
+        "TSM",
+        "PCP",
+        "ASM",
+        "MSM",
+        "TPI",
+        "CCI",
+        "PCI",
+        "LCI",
+        "HSI",
+        "APB",
+        "MCB",
+        "IMSI"
+      ]
+    },
+    "landscape": {
+      "num_basins": 0,
+      "top_basins": [],
+      "all_basins": [],
+      "basin_threshold": 0.0,
+      "transition_fraction": 1.0
+    },
+    "missing_metric_counts": {
+      "APB": 2,
+      "ASM": 2,
+      "CCI": 2,
+      "HSI": 2,
+      "IMSI": 2,
+      "LCI": 2,
+      "MCB": 2,
+      "MSM": 2,
+      "OSL": 2,
+      "PCI": 2,
+      "PCP": 2,
+      "RSS": 2,
+      "SII": 2,
+      "TPI": 2,
+      "TSM": 2
+    }
+  },
+  "ingestion_diagnostics": [
+    {
+      "tool": "kira-mitoqc",
+      "source_path": "kira-mitoqc/primary_metrics.tsv",
+      "recognized_columns": [
+        "MCB",
+        "OSL"
+      ],
+      "missing_expected_columns": [
+        "MRI",
+        "ESS",
+        "OGI"
+      ],
+      "unknown_columns": [
+        "APB",
+        "ASM",
+        "CCI",
+        "HSI",
+        "IMSI",
+        "LCI",
+        "MSM",
+        "PCI",
+        "PCP",
+        "RSS",
+        "SII",
+        "TPI",
+        "TSM",
+        "mito_axis"
+      ]
+    },
+    {
+      "tool": "kira-proteoqc",
+      "source_path": "kira-proteoqc/primary_metrics.tsv",
+      "recognized_columns": [],
+      "missing_expected_columns": [
+        "CCI",
+        "PCI",
+        "UPR_A",
+        "PLS",
+        "SCI",
+        "PCP"
+      ],
+      "unknown_columns": [
+        "proteo_axis"
+      ]
+    }
+  ],
+  "global_normalization": {
+    "method": "median_mad",
+    "eps": 9.999999717180685e-10,
+    "min_valid_cells": 20,
+    "per_metric": [
+      {
+        "metric": "RSS",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "SII",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "OSL",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "MCB",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "APB",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "IMSI",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "TPI",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "TSM",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "CCI",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "PCI",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "PCP",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "LCI",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "ASM",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "HSI",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      },
+      {
+        "metric": "MSM",
+        "median": 0.0,
+        "mad": 0.0,
+        "scale": 1.0,
+        "n_valid": 2,
+        "reliable": false,
+        "scale_degenerate": false,
+        "missing_fraction": 0.0
+      }
+    ]
+  }
+}

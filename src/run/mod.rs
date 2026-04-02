@@ -7,7 +7,7 @@ pub mod tool;
 use crate::cli::RunArgs;
 use crate::fii::FiiWeights;
 use crate::integration_export;
-use crate::{AggregateOptions, run_aggregate};
+use crate::{AggregateOptions, run_aggregate, set_write_cells_json_enabled};
 use serde_json::{Map, Value};
 use std::ffi::OsString;
 use std::io::BufRead;
@@ -47,6 +47,8 @@ pub fn run_pipeline(args: &RunArgs) -> Result<(), String> {
                 strict: args.strict,
                 dry_run: true,
                 fii_weights: args.fii_weights.clone(),
+                mitoqc_write_profile_json: args.mitoqc_write_profile_json,
+                write_cells_json: args.write_cells_json,
             };
             println!("=== experiment: {} ===", spec.name);
             let plan = plan::build_execution_plan(&exp_args);
@@ -58,7 +60,6 @@ pub fn run_pipeline(args: &RunArgs) -> Result<(), String> {
     let staging_root = base_out.join(".kira-input");
     let mut completed: Vec<(String, std::path::PathBuf)> = Vec::new();
     for spec in experiments {
-        let uses_original_input = spec.uses_original_directory();
         let prepared_input = experiments::materialize_experiment_input(&spec, &staging_root)?;
         let exp_out = if multiple {
             base_out.join(&spec.name)
@@ -74,11 +75,10 @@ pub fn run_pipeline(args: &RunArgs) -> Result<(), String> {
             strict: args.strict,
             dry_run: false,
             fii_weights: args.fii_weights.clone(),
+            mitoqc_write_profile_json: args.mitoqc_write_profile_json,
+            write_cells_json: args.write_cells_json,
         };
         run_single_pipeline(&exp_args, &spec.name)?;
-        if !uses_original_input {
-            cleanup_staging_input(&prepared_input)?;
-        }
         completed.push((spec.name.clone(), exp_out));
     }
 
@@ -113,14 +113,6 @@ fn derive_multi_report_dir_name(input: &Path) -> String {
     format!("{trimmed}-report")
 }
 
-fn cleanup_staging_input(path: &Path) -> Result<(), String> {
-    if !path.exists() {
-        return Ok(());
-    }
-    std::fs::remove_dir_all(path)
-        .map_err(|e| format!("failed cleaning temporary input {}: {e}", path.display()))
-}
-
 fn run_single_pipeline(args: &RunArgs, experiment_name: &str) -> Result<(), String> {
     let total_started = Instant::now();
     let plan_started = Instant::now();
@@ -128,7 +120,7 @@ fn run_single_pipeline(args: &RunArgs, experiment_name: &str) -> Result<(), Stri
     let plan_ms = plan_started.elapsed().as_millis() as u64;
 
     let exec_started = Instant::now();
-    let issues = exec::execute_plan(&plan, args.strict)?;
+    let issues = exec::execute_plan(&plan, args.strict, args.mitoqc_write_profile_json)?;
     let exec_ms = exec_started.elapsed().as_millis() as u64;
     if !issues.is_empty() {
         for issue in &issues {
@@ -145,10 +137,12 @@ fn run_single_pipeline(args: &RunArgs, experiment_name: &str) -> Result<(), Stri
         json: true,
         validate_only: false,
         fii_weights: parse_fii_weights(args.fii_weights.as_deref())?,
+        export_systems_model: None,
     };
+    set_write_cells_json_enabled(args.write_cells_json);
     run_aggregate(&aggregate_opts)?;
-    run_irreversibility(&plan)?;
     run_perturb_simulator(&plan, args)?;
+    run_irreversibility(&plan)?;
     mirror_primary_aggregate_outputs(&plan.organelle_out, &plan.out_root)?;
     write_organelle_bundle_zip(&plan.organelle_out, &plan.out_root, experiment_name)?;
 

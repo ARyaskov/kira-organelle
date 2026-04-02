@@ -31,6 +31,7 @@ fn axis_delta_correctness() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -81,6 +82,7 @@ fn regime_union_delta() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -127,6 +129,7 @@ fn cell_delta_common_only() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -181,6 +184,7 @@ fn comparison_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     };
 
     run_aggregate(&opts).expect("first");

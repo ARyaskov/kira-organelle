@@ -47,6 +47,12 @@ pub struct AggregateArgs {
     pub validate_only: bool,
     #[arg(long = "fii-weights")]
     pub fii_weights: Option<String>,
+    #[arg(long = "profile-stages")]
+    pub profile_stages: bool,
+    #[arg(long = "export-systems-model")]
+    pub export_systems_model: Option<PathBuf>,
+    #[arg(long = "write-cells-json", default_value_t = false)]
+    pub write_cells_json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -67,6 +73,10 @@ pub struct RunArgs {
     pub dry_run: bool,
     #[arg(long = "fii-weights")]
     pub fii_weights: Option<String>,
+    #[arg(long = "mitoqc-write-profile-json", default_value_t = false)]
+    pub mitoqc_write_profile_json: bool,
+    #[arg(long = "write-cells-json", default_value_t = false)]
+    pub write_cells_json: bool,
 }
 
 #[derive(Debug, clap::Args)]

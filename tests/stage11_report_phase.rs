@@ -243,6 +243,7 @@ fn phase_backward_compat_when_not_invoked() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
     assert!(!out.join("phase_portrait_points.tsv").exists());

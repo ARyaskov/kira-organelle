@@ -133,6 +133,7 @@ fn backward_compatibility_without_dynamics_is_unchanged() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
     assert!(!out.join("fii_state_velocity.tsv").exists());

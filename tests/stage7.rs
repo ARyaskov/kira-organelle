@@ -24,6 +24,7 @@ fn single_mode_interpretation_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     };
 
     run_aggregate(&opts).expect("first");
@@ -61,6 +62,7 @@ fn comparison_mode_signal_trigger() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -99,6 +101,7 @@ fn confidence_computation_stable() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -155,6 +158,7 @@ fn no_duplicate_signals() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 

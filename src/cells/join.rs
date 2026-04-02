@@ -45,10 +45,12 @@ pub fn build_cells_state(
 
     let cell_key = detect_global_cell_key(&tool_rows);
     let mut global_cells: BTreeMap<String, CellState> = BTreeMap::new();
+    let mut ingestion_diagnostics = Vec::new();
 
     let mut axes_by_organelle: BTreeMap<OrganelleId, BTreeSet<String>> = BTreeMap::new();
 
     for data in &tool_rows {
+        ingestion_diagnostics.push(data.ingestion_diagnostics.clone());
         let axis_set = axes_by_organelle.entry(data.organelle).or_default();
         for axis in &data.axes_union {
             axis_set.insert(axis.clone());
@@ -76,12 +78,15 @@ pub fn build_cells_state(
         .collect::<Vec<_>>();
 
     let cells = global_cells.into_values().collect::<Vec<_>>();
+    ingestion_diagnostics.sort_by(|a, b| a.tool.cmp(&b.tool));
 
     CellsState {
         schema: super::types::CELLS_SCHEMA_V1.to_string(),
         cell_key,
         n_cells: cells.len(),
         organelle_axes,
+        ingestion_diagnostics,
+        normalization_context: None,
         cells,
         issues,
     }

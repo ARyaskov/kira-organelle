@@ -30,6 +30,7 @@ fn join_partial_cells() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -75,6 +76,7 @@ fn cell_key_detection() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -108,6 +110,7 @@ fn axis_sorting_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -151,6 +154,7 @@ fn cells_json_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     };
 
     run_aggregate(&opts).expect("first");

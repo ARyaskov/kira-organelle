@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::contracts::types::{Issue, Severity};
 use crate::model::organelle::OrganelleId;
+use crate::registry::metrics::MetricId;
 
 pub const CELLS_SCHEMA_V1: &str = "kira-organelle-cells-v1";
 
@@ -36,13 +37,83 @@ pub struct OrganelleAxes {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolIngestionDiagnostics {
+    pub tool: String,
+    pub source_path: String,
+    pub recognized_columns: Vec<String>,
+    pub missing_expected_columns: Vec<String>,
+    pub unknown_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellsState {
     pub schema: String,
     pub cell_key: CellKey,
     pub n_cells: usize,
     pub organelle_axes: Vec<OrganelleAxes>,
+    #[serde(default)]
+    pub ingestion_diagnostics: Vec<ToolIngestionDiagnostics>,
+    #[serde(skip, default)]
+    pub normalization_context: Option<crate::normalize::global_robust::GlobalNormalizationContext>,
     pub cells: Vec<CellState>,
     pub issues: Vec<Issue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetricStore {
+    pub values: Vec<f32>,
+    pub present: Vec<bool>,
+    pub n_cells: usize,
+    pub n_metrics: usize,
+}
+
+impl MetricStore {
+    pub fn new(n_cells: usize) -> Self {
+        let n_metrics = MetricId::COUNT;
+        Self {
+            values: vec![f32::NAN; n_cells * n_metrics],
+            present: vec![false; n_cells * n_metrics],
+            n_cells,
+            n_metrics,
+        }
+    }
+
+    pub fn get(&self, metric_id: MetricId, cell_idx: usize) -> f32 {
+        let idx = self.offset(metric_id, cell_idx);
+        match idx {
+            Some(i) if self.present[i] => self.values[i],
+            _ => f32::NAN,
+        }
+    }
+
+    pub fn set(&mut self, metric_id: MetricId, cell_idx: usize, value: f32) {
+        let Some(idx) = self.offset(metric_id, cell_idx) else {
+            return;
+        };
+        self.values[idx] = value;
+        self.present[idx] = !value.is_nan();
+    }
+
+    pub fn metric_present(&self, metric_id: MetricId) -> bool {
+        let metric_idx = metric_id.as_index();
+        if metric_idx >= self.n_metrics {
+            return false;
+        }
+        let start = metric_idx * self.n_cells;
+        let end = start + self.n_cells;
+        self.present[start..end].iter().any(|v| *v)
+    }
+
+    fn offset(&self, metric_id: MetricId, cell_idx: usize) -> Option<usize> {
+        if cell_idx >= self.n_cells {
+            return None;
+        }
+        let metric_idx = metric_id.as_index();
+        if metric_idx >= self.n_metrics {
+            return None;
+        }
+        Some(metric_idx * self.n_cells + cell_idx)
+    }
 }
 
 impl CellsState {
@@ -52,6 +123,8 @@ impl CellsState {
             cell_key: CellKey::Sample,
             n_cells: 0,
             organelle_axes: Vec::new(),
+            ingestion_diagnostics: Vec::new(),
+            normalization_context: None,
             cells: Vec::new(),
             issues,
         }
@@ -83,6 +156,51 @@ impl CellsState {
             })
             .collect::<Vec<_>>();
         root.insert("organelle_axes".to_string(), Value::Array(organelle_axes));
+
+        let ingestion = self
+            .ingestion_diagnostics
+            .iter()
+            .map(|d| {
+                let mut item = Map::new();
+                item.insert("tool".to_string(), Value::String(d.tool.clone()));
+                item.insert(
+                    "source_path".to_string(),
+                    Value::String(d.source_path.clone()),
+                );
+                item.insert(
+                    "recognized_columns".to_string(),
+                    Value::Array(
+                        d.recognized_columns
+                            .iter()
+                            .cloned()
+                            .map(Value::String)
+                            .collect(),
+                    ),
+                );
+                item.insert(
+                    "missing_expected_columns".to_string(),
+                    Value::Array(
+                        d.missing_expected_columns
+                            .iter()
+                            .cloned()
+                            .map(Value::String)
+                            .collect(),
+                    ),
+                );
+                item.insert(
+                    "unknown_columns".to_string(),
+                    Value::Array(
+                        d.unknown_columns
+                            .iter()
+                            .cloned()
+                            .map(Value::String)
+                            .collect(),
+                    ),
+                );
+                Value::Object(item)
+            })
+            .collect::<Vec<_>>();
+        root.insert("ingestion_diagnostics".to_string(), Value::Array(ingestion));
 
         let cells = self
             .cells

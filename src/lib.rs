@@ -9,16 +9,20 @@ pub mod interpret;
 pub mod io;
 pub mod logging;
 pub mod model;
+pub mod normalize;
+pub mod registry;
 pub mod render;
 pub mod report;
 pub mod run;
 pub mod simd;
 pub mod state;
 pub mod stress_localization;
+pub mod systems;
 pub mod util;
 pub mod version;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use cells::types::CellsState;
 use contracts::types::{Issue, Severity, ToolContracts};
@@ -36,9 +40,33 @@ pub struct AggregateOptions {
     pub json: bool,
     pub validate_only: bool,
     pub fii_weights: Option<fii::FiiWeights>,
+    pub export_systems_model: Option<PathBuf>,
 }
 
 const MIN_LLM_REPORT_CONFIDENCE: f64 = 0.6;
+static PROFILE_STAGES: AtomicBool = AtomicBool::new(false);
+static WRITE_CELLS_JSON: AtomicBool = AtomicBool::new(true);
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BuildBundleProfile {
+    normalize_ms: f64,
+}
+
+pub fn set_profile_stages_enabled(enabled: bool) {
+    PROFILE_STAGES.store(enabled, Ordering::Relaxed);
+}
+
+fn profile_stages_enabled() -> bool {
+    PROFILE_STAGES.load(Ordering::Relaxed)
+}
+
+pub fn set_write_cells_json_enabled(enabled: bool) {
+    WRITE_CELLS_JSON.store(enabled, Ordering::Relaxed);
+}
+
+fn write_cells_json_enabled() -> bool {
+    WRITE_CELLS_JSON.load(Ordering::Relaxed)
+}
 
 pub fn run_aggregate(opts: &AggregateOptions) -> Result<AggregatedState, String> {
     validate_input_dir(&opts.input)?;
@@ -46,8 +74,11 @@ pub fn run_aggregate(opts: &AggregateOptions) -> Result<AggregatedState, String>
         validate_input_dir(input_b)?;
     }
 
-    let (mut state, mut cells_state) =
+    let profile_stages = profile_stages_enabled();
+    let plan_t0 = std::time::Instant::now();
+    let (mut state, mut cells_state, bundle_profile) =
         build_bundle_from_raw(&opts.input, opts.input_b.as_deref(), opts.strict)?;
+    let plan_ms = plan_t0.elapsed().as_secs_f64() * 1000.0;
 
     let fii = if let Some(weights) = opts.fii_weights {
         Some(fii::compute_fii(&cells_state, weights)?)
@@ -88,9 +119,17 @@ pub fn run_aggregate(opts: &AggregateOptions) -> Result<AggregatedState, String>
     io::write_json_atomic(&out_dir.join("state.json"), &state_value)
         .map_err(|e| format!("failed writing state.json: {e}"))?;
 
-    let cells_value = cells_state.to_json_value();
-    io::write_json_atomic(&out_dir.join("cells.json"), &cells_value)
-        .map_err(|e| format!("failed writing cells.json: {e}"))?;
+    let write_cells = write_cells_json_enabled();
+    let cells_path = out_dir.join("cells.json");
+    if write_cells {
+        let cells_value = cells_state.to_json_value();
+        io::write_json_atomic(&cells_path, &cells_value)
+            .map_err(|e| format!("failed writing cells.json: {e}"))?;
+    } else if let Err(e) = std::fs::remove_file(&cells_path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(format!("failed removing cells.json: {e}"));
+        }
+    }
     if let Some(fii) = &fii {
         let tsv = fii::render_fii_tsv(&fii.rows);
         io::write_bytes_atomic(
@@ -99,7 +138,41 @@ pub fn run_aggregate(opts: &AggregateOptions) -> Result<AggregatedState, String>
         )
         .map_err(|e| format!("failed writing functional_irreversibility_index.tsv: {e}"))?;
     }
-    integration_export::write_single_integration_artifacts(&state, &cells_state, &out_dir)?;
+    let mut systems_profile = systems::composites::SystemsStageProfile::default();
+    integration_export::write_single_integration_artifacts(
+        &state,
+        &cells_state,
+        &out_dir,
+        opts.export_systems_model.as_deref(),
+        Some(&mut systems_profile),
+    )?;
+    if profile_stages {
+        tracing::info!(
+            stage = "plan",
+            ms = format_args!("{:.3}", plan_ms),
+            "stage_profile"
+        );
+        tracing::info!(
+            stage = "normalize",
+            ms = format_args!("{:.3}", bundle_profile.normalize_ms),
+            "stage_profile"
+        );
+        tracing::info!(
+            stage = "composite",
+            ms = format_args!("{:.3}", systems_profile.composite_ms),
+            "stage_profile"
+        );
+        tracing::info!(
+            stage = "aggregate",
+            ms = format_args!("{:.3}", systems_profile.aggregate_ms),
+            "stage_profile"
+        );
+        tracing::info!(
+            stage = "fragility",
+            ms = format_args!("{:.3}", systems_profile.fragility_ms),
+            "stage_profile"
+        );
+    }
 
     if let Some(reason) = invalid_reason {
         return Err(reason);
@@ -115,7 +188,10 @@ pub fn run_aggregate(opts: &AggregateOptions) -> Result<AggregatedState, String>
         let (b_state_cmp, b_cells_cmp) =
             match compare::load_side_from_output(input_b, &mut comparison_issues) {
                 Some(v) => v,
-                None => build_bundle_from_raw(input_b, None, opts.strict)?,
+                None => {
+                    let (s, c, _) = build_bundle_from_raw(input_b, None, opts.strict)?;
+                    (s, c)
+                }
             };
 
         Some(compare::build_comparison(
@@ -169,6 +245,7 @@ pub fn run_aggregate(opts: &AggregateOptions) -> Result<AggregatedState, String>
         &opts.input,
         opts.input_b.as_deref(),
         opts.input_b.is_some(),
+        write_cells,
         llm_report_enabled,
         fii.is_some(),
     );
@@ -243,15 +320,20 @@ fn build_bundle_from_raw(
     input: &Path,
     input_b: Option<&Path>,
     strict: bool,
-) -> Result<(AggregatedState, CellsState), String> {
+) -> Result<(AggregatedState, CellsState, BuildBundleProfile), String> {
     let mut issues = Vec::new();
     let tools = contracts::discover_and_read(input, strict, &mut issues)?;
 
     let mut state = build_state(input, input_b, tools.clone(), issues);
-    let cells = cells::join::build_cells_state(input, &tools, &state.issues);
+    let mut cells = cells::join::build_cells_state(input, &tools, &state.issues);
+    let normalize_t0 = std::time::Instant::now();
+    let normalization = normalize::global_robust::compute_global_robust_normalization(&cells);
+    let normalize_ms = normalize_t0.elapsed().as_secs_f64() * 1000.0;
+    state.global_normalization = Some(normalization.summary.clone());
+    cells.normalization_context = Some(normalization);
     stress_localization::compute_and_attach(&mut state, &cells);
 
-    Ok((state, cells))
+    Ok((state, cells, BuildBundleProfile { normalize_ms }))
 }
 
 fn build_state(
@@ -282,6 +364,8 @@ fn build_state(
         organelle_states,
         stress_localization: None,
         functional_irreversibility: None,
+        systems_state_model: None,
+        global_normalization: None,
         issues,
         timestamp: io::deterministic_rfc3339_utc(),
     }
@@ -291,6 +375,7 @@ pub fn build_pipeline_step_json(
     input: &Path,
     input_b: Option<&Path>,
     has_comparison: bool,
+    has_cells: bool,
     has_llm_report: bool,
     has_fii: bool,
 ) -> Value {
@@ -328,7 +413,9 @@ pub fn build_pipeline_step_json(
 
     let mut artifacts = Map::new();
     artifacts.insert("state".to_string(), Value::String("state.json".to_string()));
-    artifacts.insert("cells".to_string(), Value::String("cells.json".to_string()));
+    if has_cells {
+        artifacts.insert("cells".to_string(), Value::String("cells.json".to_string()));
+    }
     artifacts.insert(
         "report".to_string(),
         Value::String("report.html".to_string()),
@@ -348,6 +435,22 @@ pub fn build_pipeline_step_json(
     artifacts.insert(
         "integration_expression_aggregated".to_string(),
         Value::String("integration/expression_aggregated.tsv".to_string()),
+    );
+    artifacts.insert(
+        "integration_metrics".to_string(),
+        Value::String("integration/metrics.tsv".to_string()),
+    );
+    artifacts.insert(
+        "integration_metrics_normalized".to_string(),
+        Value::String("integration/metrics_normalized.tsv".to_string()),
+    );
+    artifacts.insert(
+        "integration_systems_model".to_string(),
+        Value::String("integration/systems_model.json".to_string()),
+    );
+    artifacts.insert(
+        "integration_landscape_report".to_string(),
+        Value::String("integration/landscape.html".to_string()),
     );
     if has_llm_report {
         artifacts.insert(

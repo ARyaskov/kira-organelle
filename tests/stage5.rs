@@ -18,6 +18,8 @@ fn dry_run_plan_deterministic() {
         strict: false,
         dry_run: true,
         fii_weights: None,
+        mitoqc_write_profile_json: false,
+        write_cells_json: false,
     };
 
     let plan_a = build_execution_plan(&args);
@@ -117,6 +119,7 @@ fn binary_step_passes_assets_to_mitoqc() {
         args.contains(&assets_dir.display().to_string()),
         "missing assets path in args: {args}"
     );
+    assert!(args.contains("--redox"), "missing --redox in args: {args}");
 }
 
 #[test]
@@ -179,6 +182,8 @@ fn run_layout_created() {
         strict: false,
         dry_run: false,
         fii_weights: None,
+        mitoqc_write_profile_json: false,
+        write_cells_json: false,
     };
 
     let plan = build_execution_plan(&args);
@@ -205,6 +210,8 @@ fn default_cache_path_is_input_root() {
         strict: false,
         dry_run: false,
         fii_weights: None,
+        mitoqc_write_profile_json: false,
+        write_cells_json: false,
     };
 
     let plan = build_execution_plan(&args);

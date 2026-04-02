@@ -146,6 +146,7 @@ fn backward_compatibility_not_invoked() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
     assert!(!out.join("decision_timeline.tsv").exists());

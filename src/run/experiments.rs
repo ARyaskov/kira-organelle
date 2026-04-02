@@ -115,7 +115,7 @@ pub fn materialize_experiment_input(
     match &spec.source {
         ExperimentSource::Directory(path) => Ok(path.clone()),
         ExperimentSource::RawCountsFile(path) => {
-            let exp_dir = recreate_experiment_dir(staging_root, &spec.name)?;
+            let exp_dir = ensure_experiment_dir(staging_root, &spec.name)?;
             let target_name = if path
                 .extension()
                 .and_then(|v| v.to_str())
@@ -134,7 +134,7 @@ pub fn materialize_experiment_input(
             barcodes,
             features_or_genes,
         } => {
-            let exp_dir = recreate_experiment_dir(staging_root, &spec.name)?;
+            let exp_dir = ensure_experiment_dir(staging_root, &spec.name)?;
 
             let matrix_name = canonical_name("matrix.mtx", matrix);
             let barcodes_name = canonical_name("barcodes.tsv", barcodes);
@@ -160,14 +160,10 @@ pub fn materialize_experiment_input(
     }
 }
 
-fn recreate_experiment_dir(staging_root: &Path, name: &str) -> Result<PathBuf, String> {
+fn ensure_experiment_dir(staging_root: &Path, name: &str) -> Result<PathBuf, String> {
     std::fs::create_dir_all(staging_root)
         .map_err(|e| format!("failed creating {}: {e}", staging_root.display()))?;
     let exp_dir = staging_root.join(name);
-    if exp_dir.exists() {
-        std::fs::remove_dir_all(&exp_dir)
-            .map_err(|e| format!("failed cleaning {}: {e}", exp_dir.display()))?;
-    }
     std::fs::create_dir_all(&exp_dir)
         .map_err(|e| format!("failed creating {}: {e}", exp_dir.display()))?;
     Ok(exp_dir)

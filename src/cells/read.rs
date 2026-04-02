@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 
 use crate::contracts::types::Issue;
 use crate::model::organelle::OrganelleId;
+use crate::registry::metrics::{ToolId, expected_metrics_for_tool, find_metric_spec};
 use crate::util::tsv::TsvReader;
 use crate::warn_missing_issue;
 
-use super::types::{CellKey, OrganelleCellState};
+use super::types::{CellKey, OrganelleCellState, ToolIngestionDiagnostics};
 
 #[derive(Debug, Clone)]
 pub struct ToolCellRow {
@@ -20,6 +21,7 @@ pub struct ToolCellData {
     pub organelle: OrganelleId,
     pub cell_key: CellKey,
     pub axes_union: Vec<String>,
+    pub ingestion_diagnostics: ToolIngestionDiagnostics,
     pub rows: Vec<ToolCellRow>,
 }
 
@@ -115,6 +117,16 @@ pub fn read_tool_primary_metrics(
         .copied()
         .or_else(|| header_index.get("flag").copied());
 
+    let tool_id = ToolId::from_tool_name(tool);
+    let expected_metrics = tool_id
+        .map(expected_metrics_for_tool)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|spec| spec.canonical_name)
+        .collect::<Vec<_>>();
+
+    let mut recognized_columns = BTreeMap::<String, ()>::new();
+    let mut unknown_columns = BTreeMap::<String, ()>::new();
     let mut axis_columns = Vec::with_capacity(header_len);
     for (idx, col) in headers.iter().enumerate() {
         let lower = col.to_ascii_lowercase();
@@ -126,7 +138,26 @@ pub fn read_tool_primary_metrics(
         {
             continue;
         }
-        axis_columns.push((idx, col.clone()));
+        let canonical = tool_id
+            .and_then(|id| find_metric_spec(id, col))
+            .map(|spec| spec.canonical_name.to_string());
+        match canonical {
+            Some(name) => {
+                recognized_columns.insert(name.clone(), ());
+                axis_columns.push((idx, name));
+            }
+            None => {
+                unknown_columns.insert(col.clone(), ());
+                axis_columns.push((idx, col.clone()));
+            }
+        }
+    }
+
+    let mut missing_expected_columns = Vec::new();
+    for metric in &expected_metrics {
+        if !recognized_columns.contains_key(*metric) {
+            missing_expected_columns.push((*metric).to_string());
+        }
     }
 
     let mut axis_union = BTreeMap::new();
@@ -250,6 +281,13 @@ pub fn read_tool_primary_metrics(
         organelle,
         cell_key,
         axes_union: axis_union.into_keys().collect(),
+        ingestion_diagnostics: ToolIngestionDiagnostics {
+            tool: tool.to_string(),
+            source_path: stable_source_path(input_root, &path),
+            recognized_columns: recognized_columns.into_keys().collect(),
+            missing_expected_columns,
+            unknown_columns: unknown_columns.into_keys().collect(),
+        },
         rows,
     })
 }
@@ -282,4 +320,10 @@ fn row_is_empty(reader: &TsvReader, fields: &[std::ops::Range<usize>]) -> bool {
         }
     }
     true
+}
+
+fn stable_source_path(input_root: &Path, path: &Path) -> String {
+    path.strip_prefix(input_root)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string_lossy().to_string())
 }

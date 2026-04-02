@@ -23,6 +23,7 @@ fn extract_axes_partial_quantiles() {
         json: true,
         validate_only: true,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -57,6 +58,7 @@ fn organelle_order_deterministic() {
         json: true,
         validate_only: true,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -92,6 +94,7 @@ fn missing_distributions_warns() {
         json: true,
         validate_only: true,
         fii_weights: None,
+        export_systems_model: None,
     })
     .expect("aggregate");
 
@@ -126,6 +129,7 @@ fn state_json_schema_v1_deterministic() {
         json: true,
         validate_only: false,
         fii_weights: None,
+        export_systems_model: None,
     };
 
     run_aggregate(&opts).expect("first");

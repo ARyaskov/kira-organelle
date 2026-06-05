@@ -9,11 +9,12 @@ use crate::fii::FiiWeights;
 use crate::integration_export;
 use crate::{AggregateOptions, run_aggregate, set_write_cells_json_enabled};
 use serde_json::{Map, Value};
-use std::ffi::OsString;
-use std::io::BufRead;
+use std::fs::File;
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
+use zip::write::SimpleFileOptions;
 
 pub fn run_pipeline(args: &RunArgs) -> Result<(), String> {
     let base_out = args
@@ -98,7 +99,7 @@ pub fn run_pipeline(args: &RunArgs) -> Result<(), String> {
     Ok(())
 }
 
-fn derive_multi_report_dir_name(input: &Path) -> String {
+pub fn derive_multi_report_dir_name(input: &Path) -> String {
     let raw_name = input
         .file_name()
         .and_then(|s| s.to_str())
@@ -173,10 +174,6 @@ fn write_organelle_bundle_zip(
 ) -> Result<(), String> {
     let zip_name = format!("{}.zip", experiments::sanitize_name(experiment_name));
     let zip_path = out_root.join(zip_name);
-    if zip_path.exists() {
-        std::fs::remove_file(&zip_path)
-            .map_err(|e| format!("failed replacing {}: {e}", zip_path.display()))?;
-    }
 
     let mut files = Vec::new();
     for name in [
@@ -188,29 +185,45 @@ fn write_organelle_bundle_zip(
     ] {
         let src = organelle_out.join(name);
         if src.is_file() {
-            files.push(src);
+            files.push((name, src));
         }
     }
     if files.is_empty() {
         return Ok(());
     }
 
-    let mut cmd = Command::new("zip");
-    cmd.arg("-q").arg("-j").arg(&zip_path);
-    for file in files {
-        cmd.arg(file);
+    let tmp_path = zip_path.with_extension("zip.tmp");
+    let file = File::create(&tmp_path)
+        .map_err(|e| format!("failed creating {}: {e}", tmp_path.display()))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+
+    let mut buf = Vec::with_capacity(64 * 1024);
+    for (name, src) in files {
+        writer
+            .start_file(name, opts)
+            .map_err(|e| format!("zip start_file {name}: {e}"))?;
+        buf.clear();
+        File::open(&src)
+            .and_then(|mut f| f.read_to_end(&mut buf))
+            .map_err(|e| format!("failed reading {}: {e}", src.display()))?;
+        writer
+            .write_all(&buf)
+            .map_err(|e| format!("zip write {name}: {e}"))?;
     }
-    let status = cmd
-        .status()
-        .map_err(|e| format!("failed running zip for {}: {e}", zip_path.display()))?;
-    if !status.success() {
-        return Err(format!(
-            "zip command failed for {} with status {}",
-            zip_path.display(),
-            status
-        ));
-    }
-    Ok(())
+    writer
+        .finish()
+        .map_err(|e| format!("zip finish for {}: {e}", zip_path.display()))?;
+
+    std::fs::rename(&tmp_path, &zip_path).map_err(|e| {
+        format!(
+            "failed renaming {} -> {}: {e}",
+            tmp_path.display(),
+            zip_path.display()
+        )
+    })
 }
 
 fn mirror_primary_aggregate_outputs(organelle_out: &Path, out_root: &Path) -> Result<(), String> {
@@ -510,13 +523,13 @@ fn enrich_command_path_with_exe_dir(cmd: &mut Command) {
     let Some(parent) = exe.parent() else {
         return;
     };
-
-    let mut new_path = OsString::from(parent.as_os_str());
+    let mut paths = vec![parent.to_path_buf()];
     if let Some(existing) = std::env::var_os("PATH") {
-        new_path.push(":");
-        new_path.push(existing);
+        paths.extend(std::env::split_paths(&existing));
     }
-    cmd.env("PATH", new_path);
+    if let Ok(joined) = std::env::join_paths(paths) {
+        cmd.env("PATH", joined);
+    }
 }
 
 fn extract_baseline_axes(state_path: &Path) -> Result<Vec<(String, f64)>, String> {
@@ -650,27 +663,4 @@ fn normalize_axes_for_perturb(axes: Vec<(String, f64)>) -> Vec<(String, f64)> {
         normalized.push((name, clamped));
     }
     normalized
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use super::derive_multi_report_dir_name;
-
-    #[test]
-    fn report_dir_name_from_input_dataset() {
-        assert_eq!(
-            derive_multi_report_dir_name(Path::new("/tmp/GSE264586_RAW")),
-            "GSE264586-report"
-        );
-        assert_eq!(
-            derive_multi_report_dir_name(Path::new("/tmp/GSE127465-RAW")),
-            "GSE127465-report"
-        );
-        assert_eq!(
-            derive_multi_report_dir_name(Path::new("/tmp/experiment_set")),
-            "experiment_set-report"
-        );
-    }
 }

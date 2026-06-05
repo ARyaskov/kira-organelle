@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::BufRead;
 use std::path::Path;
 
@@ -223,31 +224,29 @@ pub fn render_cross_sample_dsp_tsv(analysis: &CrossSampleAnalysis) -> String {
     out.push_str("sample_a\tsample_b\taxis\tvalue\n");
     for pair in analysis.dsp_vectors.values() {
         for axis in &pair.vector {
-            out.push_str(&pair.sample_a);
-            out.push('\t');
-            out.push_str(&pair.sample_b);
-            out.push('\t');
-            out.push_str(&axis.axis);
-            out.push('\t');
-            out.push_str(&format!("{:.6}", canonicalize_f64(axis.value)));
-            out.push('\n');
+            let _ = writeln!(
+                &mut out,
+                "{}\t{}\t{}\t{:.6}",
+                pair.sample_a,
+                pair.sample_b,
+                axis.axis,
+                canonicalize_f64(axis.value)
+            );
         }
-        out.push_str(&pair.sample_a);
-        out.push('\t');
-        out.push_str(&pair.sample_b);
-        out.push('\t');
-        out.push_str("DSP_NORM");
-        out.push('\t');
-        out.push_str(&format!("{:.6}", canonicalize_f64(pair.norm)));
-        out.push('\n');
-        out.push_str(&pair.sample_a);
-        out.push('\t');
-        out.push_str(&pair.sample_b);
-        out.push('\t');
-        out.push_str("DSP_NORM_NORMALIZED");
-        out.push('\t');
-        out.push_str(&format!("{:.6}", canonicalize_f64(pair.norm_normalized)));
-        out.push('\n');
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\tDSP_NORM\t{:.6}",
+            pair.sample_a,
+            pair.sample_b,
+            canonicalize_f64(pair.norm)
+        );
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\tDSP_NORM_NORMALIZED\t{:.6}",
+            pair.sample_a,
+            pair.sample_b,
+            canonicalize_f64(pair.norm_normalized)
+        );
     }
     out
 }
@@ -661,21 +660,12 @@ fn euclidean4(a: [f64; 4], b: [f64; 4]) -> f64 {
     canonicalize_f64((d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3).sqrt())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[doc(hidden)]
+pub fn js_divergence_for_test(p: &[f64], q: &[f64]) -> f64 {
+    js_divergence(p, q)
+}
 
-    #[test]
-    fn js_zero_for_identical_distribution() {
-        let p = vec![0.2, 0.3, 0.5];
-        let q = vec![0.2, 0.3, 0.5];
-        let js = js_divergence(&p, &q);
-        assert_eq!(js, 0.0);
-    }
-
-    #[test]
-    fn basin_overlap_is_one_if_both_empty() {
-        let score = basin_overlap_score(&[], &[]);
-        assert_eq!(score, 1.0);
-    }
+#[doc(hidden)]
+pub fn basin_overlap_for_test() -> f64 {
+    basin_overlap_score(&[], &[])
 }

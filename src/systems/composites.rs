@@ -2219,11 +2219,9 @@ fn pos(v: Option<f32>) -> f32 {
 fn mean_positive<'a>(values: impl Iterator<Item = Option<f32>> + 'a) -> f32 {
     let mut sum = 0.0f32;
     let mut n = 0usize;
-    for v in values {
-        if let Some(x) = v {
-            sum += x.max(0.0);
-            n += 1;
-        }
+    for x in values.flatten() {
+        sum += x.max(0.0);
+        n += 1;
     }
     if n == 0 { 0.0 } else { sum / n as f32 }
 }

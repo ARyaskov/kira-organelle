@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -352,32 +353,34 @@ fn clamp01(v: f64) -> f64 {
 }
 
 fn render_tsv(rows: &[SampleDecision]) -> String {
-    let mut out = String::from(
+    let mut out = String::with_capacity(rows.len() * 128 + 256);
+    out.push_str(
         "sample_label\torder_rank\tdecision_tier\tconfidence_score\tcai_context\tpri_context\tcocs_context\tdci_context\tdrivers\n",
     );
     for row in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{:.6}\t{}\t{}\t{}\t{}\t{}\n",
-            row.sample_label,
-            row.order_rank,
-            row.decision_tier,
-            row.confidence,
-            row.cai_context
-                .map(|v| format!("{v:.6}"))
-                .unwrap_or_default(),
-            row.pri_context
-                .map(|v| format!("{v:.6}"))
-                .unwrap_or_default(),
-            row.cocs_context
-                .map(|v| format!("{v:.6}"))
-                .unwrap_or_default(),
-            row.dci_context
-                .map(|v| format!("{v:.6}"))
-                .unwrap_or_default(),
-            row.drivers.join(",")
-        ));
+        let _ = write!(
+            &mut out,
+            "{}\t{}\t{}\t{:.6}\t",
+            row.sample_label, row.order_rank, row.decision_tier, row.confidence
+        );
+        write_opt6(&mut out, row.cai_context);
+        out.push('\t');
+        write_opt6(&mut out, row.pri_context);
+        out.push('\t');
+        write_opt6(&mut out, row.cocs_context);
+        out.push('\t');
+        write_opt6(&mut out, row.dci_context);
+        out.push('\t');
+        out.push_str(&row.drivers.join(","));
+        out.push('\n');
     }
     out
+}
+
+fn write_opt6(out: &mut String, value: Option<f64>) {
+    if let Some(v) = value {
+        let _ = write!(out, "{v:.6}");
+    }
 }
 
 fn read_cai(path: &Path) -> Result<BTreeMap<String, f64>, String> {

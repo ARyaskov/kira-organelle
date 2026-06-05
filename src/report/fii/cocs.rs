@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -5,23 +7,23 @@ use crate::cli::ComputeCocsArgs;
 use crate::io;
 
 #[derive(Debug, Clone)]
-struct SamplePoint {
-    sample_label: String,
-    order_rank: usize,
-    nucleus: Option<f64>,
-    splice: Option<f64>,
-    proteostasis: Option<f64>,
-    mito: Option<f64>,
-    tme: Option<f64>,
+pub struct SamplePoint {
+    pub sample_label: String,
+    pub order_rank: usize,
+    pub nucleus: Option<f64>,
+    pub splice: Option<f64>,
+    pub proteostasis: Option<f64>,
+    pub mito: Option<f64>,
+    pub tme: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CocsRow {
-    sample_label: String,
-    order_rank: usize,
-    cocs_global: f64,
-    cocs_core: f64,
-    cocs_extended: f64,
+pub struct CocsRow {
+    pub sample_label: String,
+    pub order_rank: usize,
+    pub cocs_global: f64,
+    pub cocs_core: f64,
+    pub cocs_extended: f64,
 }
 
 pub fn run_compute_cocs(args: &ComputeCocsArgs) -> Result<(), String> {
@@ -120,52 +122,62 @@ fn validate_order(points: &[SamplePoint]) -> Result<(), String> {
     Ok(())
 }
 
-fn compute_rows(points: &[SamplePoint]) -> Vec<CocsRow> {
+pub fn compute_rows(points: &[SamplePoint]) -> Vec<CocsRow> {
     let mut rows = Vec::with_capacity(points.len());
     for i in 0..points.len() {
-        let global_pairs = pairwise_corrs(points, i, true);
-        let core_pairs = pairwise_corrs(points, i, false);
-        let extended = mean_or_zero(&global_pairs);
+        let (core_pairs, extended_pairs) = pairwise_corrs_split(points, i);
+        let global: Vec<f64> = core_pairs
+            .iter()
+            .chain(extended_pairs.iter())
+            .copied()
+            .collect();
         rows.push(CocsRow {
             sample_label: points[i].sample_label.clone(),
             order_rank: points[i].order_rank,
-            cocs_global: extended,
+            cocs_global: mean_or_zero(&global),
             cocs_core: mean_or_zero(&core_pairs),
-            cocs_extended: extended,
+            cocs_extended: mean_or_zero(&extended_pairs),
         });
     }
     rows
 }
 
-fn pairwise_corrs(points: &[SamplePoint], end_idx: usize, include_extended: bool) -> Vec<f64> {
-    let mut corr = Vec::new();
-    let pairs: [(&str, &str); 10] = [
-        ("nucleus", "splice"),
-        ("nucleus", "proteostasis"),
-        ("nucleus", "mito"),
-        ("nucleus", "tme"),
-        ("splice", "proteostasis"),
-        ("splice", "mito"),
-        ("splice", "tme"),
-        ("proteostasis", "mito"),
-        ("proteostasis", "tme"),
-        ("mito", "tme"),
-    ];
-    for (a, b) in pairs {
-        let core = matches!(
-            (a, b),
-            ("nucleus", "splice") | ("nucleus", "proteostasis") | ("splice", "proteostasis")
-        );
-        if !include_extended && !core {
-            continue;
-        }
+const PAIRS: [(&str, &str); 10] = [
+    ("nucleus", "splice"),
+    ("nucleus", "proteostasis"),
+    ("nucleus", "mito"),
+    ("nucleus", "tme"),
+    ("splice", "proteostasis"),
+    ("splice", "mito"),
+    ("splice", "tme"),
+    ("proteostasis", "mito"),
+    ("proteostasis", "tme"),
+    ("mito", "tme"),
+];
+
+fn is_core_pair(a: &str, b: &str) -> bool {
+    matches!(
+        (a, b),
+        ("nucleus", "splice") | ("nucleus", "proteostasis") | ("splice", "proteostasis")
+    )
+}
+
+fn pairwise_corrs_split(points: &[SamplePoint], end_idx: usize) -> (Vec<f64>, Vec<f64>) {
+    let mut core = Vec::with_capacity(3);
+    let mut extended = Vec::with_capacity(7);
+    for (a, b) in PAIRS {
         let (xs, ys) = delta_vectors(points, end_idx, a, b);
         if xs.len() < 2 {
             continue;
         }
-        corr.push(spearman_abs(&xs, &ys));
+        let value = spearman_abs(&xs, &ys);
+        if is_core_pair(a, b) {
+            core.push(value);
+        } else {
+            extended.push(value);
+        }
     }
-    corr
+    (core, extended)
 }
 
 fn delta_vectors(points: &[SamplePoint], end_idx: usize, a: &str, b: &str) -> (Vec<f64>, Vec<f64>) {
@@ -260,98 +272,15 @@ fn pearson_abs(xs: &[f64], ys: &[f64]) -> f64 {
     }
 }
 
-fn render_tsv(rows: &[CocsRow]) -> String {
-    let mut out = String::from("sample_label\torder_rank\tCOCS_global\tCOCS_core\tCOCS_extended\n");
+pub fn render_tsv(rows: &[CocsRow]) -> String {
+    let mut out = String::with_capacity(rows.len() * 64 + 96);
+    out.push_str("sample_label\torder_rank\tCOCS_global\tCOCS_core\tCOCS_extended\n");
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{:.6}\t{:.6}\t{:.6}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{:.6}\t{:.6}\t{:.6}",
             r.sample_label, r.order_rank, r.cocs_global, r.cocs_core, r.cocs_extended
-        ));
+        );
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn p(label: &str, rank: usize, n: f64, s: f64, pr: f64, m: f64, t: f64) -> SamplePoint {
-        SamplePoint {
-            sample_label: label.to_string(),
-            order_rank: rank,
-            nucleus: Some(n),
-            splice: Some(s),
-            proteostasis: Some(pr),
-            mito: Some(m),
-            tme: Some(t),
-        }
-    }
-
-    #[test]
-    fn coupled_vs_uncoupled() {
-        let uncoupled = vec![
-            p("s0", 0, 0.1, 0.1, 0.1, 0.1, 0.1),
-            p("s1", 1, 0.2, 0.05, 0.13, 0.11, 0.07),
-            p("s2", 2, 0.25, 0.2, 0.11, 0.18, 0.09),
-            p("s3", 3, 0.3, 0.1, 0.2, 0.15, 0.14),
-        ];
-        let coupled = vec![
-            p("s0", 0, 0.1, 0.1, 0.1, 0.1, 0.1),
-            p("s1", 1, 0.2, 0.2, 0.2, 0.2, 0.2),
-            p("s2", 2, 0.3, 0.3, 0.3, 0.3, 0.3),
-            p("s3", 3, 0.45, 0.45, 0.45, 0.45, 0.45),
-        ];
-        let ru = compute_rows(&uncoupled);
-        let rc = compute_rows(&coupled);
-        assert!(rc.last().expect("c").cocs_global > ru.last().expect("u").cocs_global);
-    }
-
-    #[test]
-    fn monotonic_higher_than_noisy() {
-        let mono = vec![
-            p("s0", 0, 0.1, 0.1, 0.1, 0.1, 0.1),
-            p("s1", 1, 0.14, 0.13, 0.15, 0.145, 0.135),
-            p("s2", 2, 0.23, 0.21, 0.25, 0.235, 0.225),
-            p("s3", 3, 0.26, 0.24, 0.29, 0.27, 0.255),
-            p("s4", 4, 0.38, 0.35, 0.42, 0.39, 0.37),
-        ];
-        let noisy = vec![
-            p("s0", 0, 0.10, 0.10, 0.20, 0.20, 0.20),
-            p("s1", 1, 0.25, 0.13, 0.12, 0.31, 0.16),
-            p("s2", 2, 0.13, 0.33, 0.26, 0.26, 0.23),
-            p("s3", 3, 0.35, 0.16, 0.28, 0.10, 0.41),
-            p("s4", 4, 0.17, 0.21, 0.07, 0.34, 0.32),
-            p("s5", 5, 0.36, 0.10, 0.16, 0.30, 0.19),
-        ];
-        let rm = compute_rows(&mono);
-        let rn = compute_rows(&noisy);
-        assert!(rm.last().expect("m").cocs_global >= rn.last().expect("n").cocs_global);
-    }
-
-    #[test]
-    fn missing_organelle_values_are_robust() {
-        let mut pts = vec![
-            p("s0", 0, 0.1, 0.1, 0.1, 0.1, 0.1),
-            p("s1", 1, 0.2, 0.2, 0.2, 0.2, 0.2),
-            p("s2", 2, 0.3, 0.3, 0.3, 0.3, 0.3),
-        ];
-        pts[1].tme = None;
-        pts[2].mito = None;
-        let rows = compute_rows(&pts);
-        let last = rows.last().expect("last");
-        assert!(last.cocs_global.is_finite());
-        assert!((0.0..=1.0).contains(&last.cocs_global));
-    }
-
-    #[test]
-    fn deterministic() {
-        let pts = vec![
-            p("s0", 0, 0.1, 0.2, 0.3, 0.4, 0.5),
-            p("s1", 1, 0.2, 0.3, 0.4, 0.5, 0.6),
-            p("s2", 2, 0.4, 0.5, 0.6, 0.7, 0.8),
-        ];
-        let a = compute_rows(&pts);
-        let b = compute_rows(&pts);
-        assert_eq!(render_tsv(&a), render_tsv(&b));
-    }
 }

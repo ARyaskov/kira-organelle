@@ -3,14 +3,38 @@ use std::fs;
 use kira_organelle::{AggregateOptions, run_aggregate};
 use tempfile::tempdir;
 
+fn normalize_eol(buf: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(buf.len());
+    let mut prev_was_cr = false;
+    for byte in buf {
+        if byte == b'\r' {
+            prev_was_cr = true;
+            continue;
+        }
+        if prev_was_cr && byte != b'\n' {
+            out.push(b'\n');
+        }
+        out.push(byte);
+        prev_was_cr = false;
+    }
+    if prev_was_cr {
+        out.push(b'\n');
+    }
+    out
+}
+
 #[test]
 fn snapshot_minimal_is_byte_identical() {
     let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let input = repo.join("tests/fixtures/snapshot_input");
-    let expected_metrics = fs::read(repo.join("tests/fixtures/expected_metrics.tsv"))
-        .expect("read expected_metrics.tsv");
-    let expected_summary = fs::read(repo.join("tests/fixtures/expected_summary.json"))
-        .expect("read expected_summary.json");
+    let expected_metrics = normalize_eol(
+        fs::read(repo.join("tests/fixtures/expected_metrics.tsv"))
+            .expect("read expected_metrics.tsv"),
+    );
+    let expected_summary = normalize_eol(
+        fs::read(repo.join("tests/fixtures/expected_summary.json"))
+            .expect("read expected_summary.json"),
+    );
 
     let first = tempdir().expect("tempdir first");
     let second = tempdir().expect("tempdir second");
@@ -38,14 +62,18 @@ fn snapshot_minimal_is_byte_identical() {
     })
     .expect("aggregate second");
 
-    let first_metrics =
-        fs::read(first.path().join("integration/metrics.tsv")).expect("first metrics");
-    let first_summary =
-        fs::read(first.path().join("integration/summary.json")).expect("first summary");
-    let second_metrics =
-        fs::read(second.path().join("integration/metrics.tsv")).expect("second metrics");
-    let second_summary =
-        fs::read(second.path().join("integration/summary.json")).expect("second summary");
+    let first_metrics = normalize_eol(
+        fs::read(first.path().join("integration/metrics.tsv")).expect("first metrics"),
+    );
+    let first_summary = normalize_eol(
+        fs::read(first.path().join("integration/summary.json")).expect("first summary"),
+    );
+    let second_metrics = normalize_eol(
+        fs::read(second.path().join("integration/metrics.tsv")).expect("second metrics"),
+    );
+    let second_summary = normalize_eol(
+        fs::read(second.path().join("integration/summary.json")).expect("second summary"),
+    );
 
     assert_eq!(
         first_metrics, second_metrics,

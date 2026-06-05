@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::cells::types::{CellsState, MetricStore};
@@ -11,62 +12,7 @@ pub const EPS: f32 = 1e-9;
 pub const MIN_VALID_CELLS: usize = 20;
 const GAUSSIAN_MAD_SCALE: f32 = 1.4826;
 
-#[derive(Debug, Clone)]
-pub struct NormStore {
-    pub z: Vec<f32>,
-    pub present: Vec<bool>,
-    pub n_cells: usize,
-    pub n_metrics: usize,
-}
-
-impl NormStore {
-    pub fn new(n_cells: usize) -> Self {
-        let n_metrics = MetricId::COUNT;
-        Self {
-            z: vec![f32::NAN; n_cells * n_metrics],
-            present: vec![false; n_cells * n_metrics],
-            n_cells,
-            n_metrics,
-        }
-    }
-
-    pub fn get(&self, metric_id: MetricId, cell_idx: usize) -> f32 {
-        let idx = self.offset(metric_id, cell_idx);
-        match idx {
-            Some(i) if self.present[i] => self.z[i],
-            _ => f32::NAN,
-        }
-    }
-
-    pub fn set(&mut self, metric_id: MetricId, cell_idx: usize, value: f32) {
-        let Some(idx) = self.offset(metric_id, cell_idx) else {
-            return;
-        };
-        self.z[idx] = value;
-        self.present[idx] = !value.is_nan();
-    }
-
-    pub fn metric_present(&self, metric_id: MetricId) -> bool {
-        let metric_idx = metric_id.as_index();
-        if metric_idx >= self.n_metrics {
-            return false;
-        }
-        let start = metric_idx * self.n_cells;
-        let end = start + self.n_cells;
-        self.present[start..end].iter().any(|v| *v)
-    }
-
-    fn offset(&self, metric_id: MetricId, cell_idx: usize) -> Option<usize> {
-        if cell_idx >= self.n_cells {
-            return None;
-        }
-        let metric_idx = metric_id.as_index();
-        if metric_idx >= self.n_metrics {
-            return None;
-        }
-        Some(metric_idx * self.n_cells + cell_idx)
-    }
-}
+pub type NormStore = MetricStore;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RobustStats {
@@ -106,22 +52,21 @@ pub struct GlobalNormalizationContext {
     pub summary: GlobalNormalizationSummary,
 }
 
+struct MetricSlice {
+    z: Vec<f32>,
+    present: Vec<bool>,
+}
+
+struct PerMetricOutcome {
+    metric_idx: usize,
+    stats: RobustStats,
+    slice: MetricSlice,
+    summary: Option<GlobalNormalizationMetricSummary>,
+}
+
 pub fn compute_global_robust_normalization(cells: &CellsState) -> GlobalNormalizationContext {
     let n_cells = cells.n_cells;
     let mut raw_store = MetricStore::new(n_cells);
-    let mut norm_store = NormStore::new(n_cells);
-    let mut stats = vec![
-        RobustStats {
-            median: 0.0,
-            mad: 0.0,
-            scale: 1.0,
-            n_valid: 0,
-            reliable: false,
-            scale_degenerate: false,
-            missing_fraction: 1.0,
-        };
-        MetricId::COUNT
-    ];
 
     let canonical_to_metric = METRIC_SPECS
         .iter()
@@ -138,124 +83,34 @@ pub fn compute_global_robust_normalization(cells: &CellsState) -> GlobalNormaliz
         }
     }
 
-    let mut buf = Vec::<f64>::with_capacity(n_cells);
-    let mut dev = Vec::<f64>::with_capacity(n_cells);
-    let mut per_metric_summary = Vec::<GlobalNormalizationMetricSummary>::new();
+    let outcomes: Vec<PerMetricOutcome> = METRIC_SPECS
+        .par_iter()
+        .map(|spec| compute_one_metric(spec, &raw_store, n_cells))
+        .collect();
 
-    for spec in METRIC_SPECS {
-        let metric_id = spec.id;
-        buf.clear();
-        for cell_idx in 0..n_cells {
-            let v = raw_store.get(metric_id, cell_idx);
-            if v.is_finite() {
-                buf.push(v as f64);
-            }
-        }
-
-        let n_valid = buf.len();
-        let missing_fraction = if n_cells == 0 {
-            1.0
-        } else {
-            1.0 - (n_valid as f32 / n_cells as f32)
-        };
-
-        let idx = metric_id.as_index();
-        if n_valid < MIN_VALID_CELLS {
-            stats[idx] = RobustStats {
-                median: 0.0,
-                mad: 0.0,
-                scale: 1.0,
-                n_valid: n_valid as u32,
-                reliable: false,
-                scale_degenerate: false,
-                missing_fraction: canonicalize_f32(missing_fraction),
-            };
-            for cell_idx in 0..n_cells {
-                norm_store.set(metric_id, cell_idx, f32::NAN);
-            }
-            if n_valid > 0 {
-                per_metric_summary.push(GlobalNormalizationMetricSummary {
-                    metric: spec.canonical_name.to_string(),
-                    median: 0.0,
-                    mad: 0.0,
-                    scale: 1.0,
-                    n_valid: n_valid as u32,
-                    reliable: false,
-                    scale_degenerate: false,
-                    missing_fraction: canonicalize_f32(missing_fraction),
-                });
-            }
-            continue;
-        }
-
-        let median = median_in_place(&mut buf).unwrap_or(0.0) as f32;
-
-        dev.clear();
-        dev.extend(buf.iter().map(|v| (*v as f32 - median).abs() as f64));
-        let mad = median_in_place(&mut dev).unwrap_or(0.0) as f32;
-
-        if mad == 0.0 {
-            stats[idx] = RobustStats {
-                median,
-                mad,
-                scale: 1.0,
-                n_valid: n_valid as u32,
-                reliable: true,
-                scale_degenerate: true,
-                missing_fraction: canonicalize_f32(missing_fraction),
-            };
-            for cell_idx in 0..n_cells {
-                let raw = raw_store.get(metric_id, cell_idx);
-                if raw.is_finite() {
-                    norm_store.set(metric_id, cell_idx, 0.0);
-                } else {
-                    norm_store.set(metric_id, cell_idx, f32::NAN);
-                }
-            }
-            per_metric_summary.push(GlobalNormalizationMetricSummary {
-                metric: spec.canonical_name.to_string(),
-                median,
-                mad,
-                scale: 1.0,
-                n_valid: n_valid as u32,
-                reliable: true,
-                scale_degenerate: true,
-                missing_fraction: canonicalize_f32(missing_fraction),
-            });
-            continue;
-        }
-
-        let scale = canonicalize_f32(GAUSSIAN_MAD_SCALE * mad);
-        stats[idx] = RobustStats {
-            median: canonicalize_f32(median),
-            mad: canonicalize_f32(mad),
-            scale,
-            n_valid: n_valid as u32,
-            reliable: true,
-            scale_degenerate: false,
-            missing_fraction: canonicalize_f32(missing_fraction),
-        };
-
-        for cell_idx in 0..n_cells {
-            let raw = raw_store.get(metric_id, cell_idx);
-            if raw.is_finite() {
-                let z = (raw - median) / (scale + EPS);
-                norm_store.set(metric_id, cell_idx, canonicalize_f32(z));
+    let mut norm_store = NormStore::new(n_cells);
+    let mut stats = vec![default_stats(); MetricId::COUNT];
+    let mut per_metric_summary =
+        Vec::<GlobalNormalizationMetricSummary>::with_capacity(MetricId::COUNT);
+    for outcome in outcomes {
+        stats[outcome.metric_idx] = outcome.stats;
+        let metric_id = METRIC_SPECS[outcome.metric_idx].id;
+        for (cell_idx, (&z, &present)) in outcome
+            .slice
+            .z
+            .iter()
+            .zip(outcome.slice.present.iter())
+            .enumerate()
+        {
+            if present {
+                norm_store.set(metric_id, cell_idx, z);
             } else {
                 norm_store.set(metric_id, cell_idx, f32::NAN);
             }
         }
-
-        per_metric_summary.push(GlobalNormalizationMetricSummary {
-            metric: spec.canonical_name.to_string(),
-            median: canonicalize_f32(median),
-            mad: canonicalize_f32(mad),
-            scale,
-            n_valid: n_valid as u32,
-            reliable: true,
-            scale_degenerate: false,
-            missing_fraction: canonicalize_f32(missing_fraction),
-        });
+        if let Some(s) = outcome.summary {
+            per_metric_summary.push(s);
+        }
     }
 
     per_metric_summary.sort_by(|a, b| {
@@ -279,6 +134,151 @@ pub fn compute_global_robust_normalization(cells: &CellsState) -> GlobalNormaliz
             min_valid_cells: MIN_VALID_CELLS,
             per_metric: per_metric_summary,
         },
+    }
+}
+
+fn default_stats() -> RobustStats {
+    RobustStats {
+        median: 0.0,
+        mad: 0.0,
+        scale: 1.0,
+        n_valid: 0,
+        reliable: false,
+        scale_degenerate: false,
+        missing_fraction: 1.0,
+    }
+}
+
+fn compute_one_metric(
+    spec: &crate::registry::metrics::MetricSpec,
+    raw_store: &MetricStore,
+    n_cells: usize,
+) -> PerMetricOutcome {
+    let metric_id = spec.id;
+    let metric_idx = metric_id.as_index();
+
+    let mut buf = Vec::<f64>::with_capacity(n_cells);
+    let mut raw_cache = Vec::<f32>::with_capacity(n_cells);
+    for cell_idx in 0..n_cells {
+        let v = raw_store.get(metric_id, cell_idx);
+        raw_cache.push(v);
+        if v.is_finite() {
+            buf.push(v as f64);
+        }
+    }
+
+    let n_valid = buf.len();
+    let missing_fraction = if n_cells == 0 {
+        1.0
+    } else {
+        1.0 - (n_valid as f32 / n_cells as f32)
+    };
+
+    let mut slice = MetricSlice {
+        z: vec![f32::NAN; n_cells],
+        present: vec![false; n_cells],
+    };
+
+    if n_valid < MIN_VALID_CELLS {
+        let stats = RobustStats {
+            n_valid: n_valid as u32,
+            missing_fraction: canonicalize_f32(missing_fraction),
+            ..default_stats()
+        };
+        let summary = (n_valid > 0).then(|| GlobalNormalizationMetricSummary {
+            metric: spec.canonical_name.to_string(),
+            median: 0.0,
+            mad: 0.0,
+            scale: 1.0,
+            n_valid: n_valid as u32,
+            reliable: false,
+            scale_degenerate: false,
+            missing_fraction: canonicalize_f32(missing_fraction),
+        });
+        return PerMetricOutcome {
+            metric_idx,
+            stats,
+            slice,
+            summary,
+        };
+    }
+
+    let median_f64 = median_in_place(&mut buf).unwrap_or(0.0);
+    let median = median_f64 as f32;
+
+    let mut dev = Vec::<f64>::with_capacity(buf.len());
+    dev.extend(buf.iter().map(|v| (*v - median_f64).abs()));
+    let mad = median_in_place(&mut dev).unwrap_or(0.0) as f32;
+
+    if mad == 0.0 {
+        let stats = RobustStats {
+            median,
+            mad,
+            scale: 1.0,
+            n_valid: n_valid as u32,
+            reliable: true,
+            scale_degenerate: true,
+            missing_fraction: canonicalize_f32(missing_fraction),
+        };
+        for (cell_idx, raw) in raw_cache.iter().enumerate() {
+            if raw.is_finite() {
+                slice.z[cell_idx] = 0.0;
+                slice.present[cell_idx] = true;
+            }
+        }
+        let summary = Some(GlobalNormalizationMetricSummary {
+            metric: spec.canonical_name.to_string(),
+            median,
+            mad,
+            scale: 1.0,
+            n_valid: n_valid as u32,
+            reliable: true,
+            scale_degenerate: true,
+            missing_fraction: canonicalize_f32(missing_fraction),
+        });
+        return PerMetricOutcome {
+            metric_idx,
+            stats,
+            slice,
+            summary,
+        };
+    }
+
+    let scale = canonicalize_f32(GAUSSIAN_MAD_SCALE * mad);
+    let stats = RobustStats {
+        median: canonicalize_f32(median),
+        mad: canonicalize_f32(mad),
+        scale,
+        n_valid: n_valid as u32,
+        reliable: true,
+        scale_degenerate: false,
+        missing_fraction: canonicalize_f32(missing_fraction),
+    };
+
+    let denom = scale + EPS;
+    for (cell_idx, raw) in raw_cache.iter().enumerate() {
+        if raw.is_finite() {
+            let z = (raw - median) / denom;
+            slice.z[cell_idx] = canonicalize_f32(z);
+            slice.present[cell_idx] = true;
+        }
+    }
+
+    let summary = Some(GlobalNormalizationMetricSummary {
+        metric: spec.canonical_name.to_string(),
+        median: canonicalize_f32(median),
+        mad: canonicalize_f32(mad),
+        scale,
+        n_valid: n_valid as u32,
+        reliable: true,
+        scale_degenerate: false,
+        missing_fraction: canonicalize_f32(missing_fraction),
+    });
+    PerMetricOutcome {
+        metric_idx,
+        stats,
+        slice,
+        summary,
     }
 }
 

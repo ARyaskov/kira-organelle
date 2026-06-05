@@ -1,3 +1,4 @@
+#![allow(clippy::bool_assert_comparison)]
 use std::fs;
 
 use kira_organelle::{AggregateOptions, run_aggregate};

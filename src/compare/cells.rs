@@ -27,14 +27,13 @@ pub fn compute_cell_delta_summary(a: &CellsState, b: &CellsState) -> CellDeltaSu
         BTreeMap::new();
 
     for id in &common_ids {
-        let a_cell = a_map.get(id).expect("exists");
-        let b_cell = b_map.get(id).expect("exists");
-
+        let (Some(a_cell), Some(b_cell)) = (a_map.get(id), b_map.get(id)) else {
+            continue;
+        };
         for (organelle, a_org) in &a_cell.per_organelle {
             let Some(b_org) = b_cell.per_organelle.get(organelle) else {
                 continue;
             };
-
             for (axis, a_val) in &a_org.axes {
                 let Some(b_val) = b_org.axes.get(axis) else {
                     continue;
@@ -49,17 +48,15 @@ pub fn compute_cell_delta_summary(a: &CellsState, b: &CellsState) -> CellDeltaSu
 
     let axes = deltas
         .into_iter()
-        .filter_map(|((organelle, axis), values)| {
+        .filter_map(|((organelle, axis), mut values)| {
             if values.is_empty() {
                 return None;
             }
-            let mut median_buf = values.clone();
-            let median_delta = median_in_place(&mut median_buf)?;
-            let mut abs_buf = values;
-            for v in &mut abs_buf {
+            let median_delta = median_in_place(&mut values)?;
+            for v in &mut values {
                 *v = v.abs();
             }
-            let p90_abs_delta = percentile_nearest_rank_in_place(&mut abs_buf, 0.90)?;
+            let p90_abs_delta = percentile_nearest_rank_in_place(&mut values, 0.90)?;
 
             Some(CellAxisDeltaSummary {
                 organelle,

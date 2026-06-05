@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::cli::RunArgs;
@@ -73,33 +74,31 @@ pub fn build_execution_plan(args: &RunArgs) -> ExecutionPlan {
 }
 
 pub fn render_dry_run_plan(plan: &ExecutionPlan) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(512);
     out.push_str("Execution Plan\n");
-    out.push_str(&format!("input: {}\n", plan.input.display()));
-    out.push_str(&format!("out_root: {}\n", plan.out_root.display()));
-    out.push_str(&format!(
-        "organelle_out: {}\n",
-        plan.organelle_out.display()
-    ));
+    let _ = writeln!(&mut out, "input: {}", plan.input.display());
+    let _ = writeln!(&mut out, "out_root: {}", plan.out_root.display());
+    let _ = writeln!(&mut out, "organelle_out: {}", plan.organelle_out.display());
 
     for (idx, step) in plan.steps.iter().enumerate() {
-        out.push_str(&format!("{}. {}\n", idx + 1, step.tool));
-        out.push_str(&format!("   input: {}\n", step.input.display()));
-        out.push_str(&format!("   out: {}\n", step.out_dir.display()));
-        out.push_str(&format!("   mode: {}\n", mode_label(&step.mode)));
-        out.push_str(&format!(
-            "   threads: {}\n",
-            step.threads
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "-".to_string())
-        ));
-        out.push_str(&format!(
-            "   cache: {}\n",
-            step.cache_path
-                .as_ref()
-                .map(|v| v.display().to_string())
-                .unwrap_or_else(|| "disabled".to_string())
-        ));
+        let _ = writeln!(&mut out, "{}. {}", idx + 1, step.tool);
+        let _ = writeln!(&mut out, "   input: {}", step.input.display());
+        let _ = writeln!(&mut out, "   out: {}", step.out_dir.display());
+        let _ = writeln!(&mut out, "   mode: {}", mode_label(&step.mode));
+        out.push_str("   threads: ");
+        match step.threads {
+            Some(v) => {
+                let _ = writeln!(&mut out, "{v}");
+            }
+            None => out.push_str("-\n"),
+        }
+        out.push_str("   cache: ");
+        match step.cache_path.as_ref() {
+            Some(v) => {
+                let _ = writeln!(&mut out, "{}", v.display());
+            }
+            None => out.push_str("disabled\n"),
+        }
     }
 
     out

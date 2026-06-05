@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -6,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::cli::ComputeStateDynamicsArgs;
 use crate::io;
+use crate::util::select::median_in_place;
 use crate::util::tsv::TsvReader;
 
 use super::read::{SampleInput, resolve_inputs};
@@ -214,9 +216,8 @@ fn read_sample_dynamics(spec: &SampleInput) -> Result<SampleDynamics, String> {
         });
     }
 
-    fii_values.sort_by(|a, b| a.total_cmp(b));
     let mean = fii_values.iter().sum::<f64>() / fii_values.len() as f64;
-    let median = percentile(&fii_values, 0.5);
+    let median = median_in_place(&mut fii_values).unwrap_or(0.0);
     if mito_n == 0 || translation_n == 0 || splice_n == 0 {
         low_conf = true;
     }
@@ -272,14 +273,6 @@ fn build_idx(cols: &[String]) -> BTreeMap<String, usize> {
     out
 }
 
-fn percentile(sorted: &[f64], q: f64) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    let idx = ((sorted.len() - 1) as f64 * q).round() as usize;
-    sorted[idx]
-}
-
 fn render_velocity_tsv(rows: &[SampleDynamics]) -> String {
     let mut out = String::from(
         "sample_label\torder_rank\tfii_mean\tfii_median\tfii_velocity\tmito_velocity\ttranslation_velocity\tsplice_velocity\tlow_confidence\n",
@@ -291,8 +284,9 @@ fn render_velocity_tsv(rows: &[SampleDynamics]) -> String {
         let translation_vel =
             delta_opt(row.translation_mean, prev.and_then(|p| p.translation_mean));
         let splice_vel = delta_opt(row.splice_mean, prev.and_then(|p| p.splice_mean));
-        out.push_str(&format!(
-            "{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{}",
             row.label,
             row.order_rank,
             row.fii_mean,
@@ -302,7 +296,7 @@ fn render_velocity_tsv(rows: &[SampleDynamics]) -> String {
             fmt_opt(translation_vel),
             fmt_opt(splice_vel),
             if row.low_confidence { "true" } else { "false" }
-        ));
+        );
     }
     out
 }
@@ -347,8 +341,9 @@ fn render_acceleration_tsv(rows: &[SampleDynamics]) -> String {
         } else {
             None
         };
-        out.push_str(&format!(
-            "{}\t{}\t{:.6}\t{}\t{}\t{}\t{}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{:.6}\t{}\t{}\t{}\t{}",
             row.label,
             row.order_rank,
             fii_acc,
@@ -356,7 +351,7 @@ fn render_acceleration_tsv(rows: &[SampleDynamics]) -> String {
             fmt_opt(translation_acc),
             fmt_opt(splice_acc),
             if row.low_confidence { "true" } else { "false" }
-        ));
+        );
     }
     out
 }

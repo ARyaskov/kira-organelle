@@ -1,10 +1,16 @@
 use std::fs;
 
 use kira_organelle::cli::RunArgs;
-use kira_organelle::run::exec::{execute_step, prepare_layout};
-use kira_organelle::run::plan::{ToolStep, build_execution_plan, render_dry_run_plan};
-use kira_organelle::run::tool::ToolInvocationMode;
+use kira_organelle::run::exec::prepare_layout;
+use kira_organelle::run::plan::{build_execution_plan, render_dry_run_plan};
 use tempfile::tempdir;
+
+#[cfg(unix)]
+use kira_organelle::run::exec::execute_step;
+#[cfg(unix)]
+use kira_organelle::run::plan::ToolStep;
+#[cfg(unix)]
+use kira_organelle::run::tool::ToolInvocationMode;
 
 #[test]
 fn dry_run_plan_deterministic() {
@@ -31,6 +37,7 @@ fn dry_run_plan_deterministic() {
     assert_eq!(text_a, text_b);
 }
 
+#[cfg(unix)]
 #[test]
 fn binary_fallback_mock() {
     let dir = tempdir().expect("tempdir");
@@ -68,6 +75,7 @@ fn binary_fallback_mock() {
     assert!(out.join("mock-ok.txt").is_file());
 }
 
+#[cfg(unix)]
 #[test]
 fn binary_step_passes_assets_to_mitoqc() {
     let dir = tempdir().expect("tempdir");
@@ -122,6 +130,7 @@ fn binary_step_passes_assets_to_mitoqc() {
     assert!(args.contains("--redox"), "missing --redox in args: {args}");
 }
 
+#[cfg(unix)]
 #[test]
 fn binary_step_passes_cache_to_nuclearqc() {
     let dir = tempdir().expect("tempdir");

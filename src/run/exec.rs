@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use flate2::read::GzDecoder;
 use kira_mitoqc::io::mtx::load_mtx_dir;
@@ -507,71 +507,6 @@ fn resolve_shared_cache_path(
     }
 }
 
-fn resolve_shared_cache_bin_path(
-    input: &Path,
-    out_root: &Path,
-    mito_out_dir: &Path,
-) -> Result<PathBuf, String> {
-    let input_root = if input.is_file() {
-        input.parent().unwrap_or(input)
-    } else {
-        input
-    };
-    let exact_input = input_root.join("kira-organelle.bin");
-    if exact_input.is_file() {
-        return Ok(exact_input);
-    }
-
-    let exact_out = out_root.join("kira-organelle.bin");
-    if exact_out.is_file() {
-        return Ok(exact_out);
-    }
-
-    let exact_mito_out = mito_out_dir.join("kira-organelle.bin");
-    if exact_mito_out.is_file() {
-        return Ok(exact_mito_out);
-    }
-
-    let mut candidates = collect_shared_cache_bin_candidates(input_root)?;
-    candidates.extend(collect_shared_cache_bin_candidates(out_root)?);
-    candidates.extend(collect_shared_cache_bin_candidates(mito_out_dir)?);
-    candidates.sort();
-
-    match candidates.first() {
-        Some(path) => Ok(path.clone()),
-        None => Err(format!(
-            "shared cache file not found; expected {}, {} or {} (or *.kira-organelle.bin file in those dirs)",
-            exact_input.display(),
-            exact_out.display(),
-            exact_mito_out.display()
-        )),
-    }
-}
-
-fn collect_shared_cache_bin_candidates(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    if dir.is_file() {
-        return Ok(Vec::new());
-    }
-    let rd = std::fs::read_dir(dir)
-        .map_err(|e| format!("failed reading directory {}: {e}", dir.display()))?;
-    let mut candidates = Vec::new();
-    for entry in rd {
-        let entry =
-            entry.map_err(|e| format!("failed reading directory {}: {e}", dir.display()))?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if name == "kira-organelle.bin" || name.ends_with(".kira-organelle.bin") {
-            candidates.push(path);
-        }
-    }
-    Ok(candidates)
-}
-
 fn resolve_expression_cache_path(
     input: &Path,
     out_root: &Path,
@@ -596,25 +531,6 @@ fn resolve_expression_cache_path(
     }
 
     resolve_shared_cache_path(input, out_root, mito_out_dir)
-}
-
-fn refresh_mito_shared_cache(step: &ToolStep, out_root: &Path) -> Result<(), String> {
-    let mut retry_step = step.clone();
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let isolated_cache = out_root.join(format!(".kira-mitoqc-refresh-cache.{ts}"));
-    retry_step.cache_path = Some(isolated_cache);
-    let result = execute_step(&retry_step);
-    if result.success {
-        Ok(())
-    } else {
-        Err(format!(
-            "failed to refresh kira-mitoqc shared cache: {}",
-            result.message
-        ))
-    }
 }
 
 fn collect_shared_cache_candidates(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -725,7 +641,7 @@ fn execute_binary_step(step: &ToolStep, path: &std::path::Path) -> ToolResult {
     }
 }
 
-fn build_tool_args(step: &ToolStep, bin_path: &Path) -> Result<Vec<String>, String> {
+pub fn build_tool_args(step: &ToolStep, bin_path: &Path) -> Result<Vec<String>, String> {
     let cwd = std::env::current_dir().ok();
     let input = absolutize_from_cwd(&step.input, cwd.as_deref());
     let out_dir = absolutize_from_cwd(&step.out_dir, cwd.as_deref());
@@ -847,8 +763,10 @@ fn build_tool_args(step: &ToolStep, bin_path: &Path) -> Result<Vec<String>, Stri
         }
     }
 
-    if supports_cache_arg(&step.tool) && step.cache_path.is_some() && step.tool != "kira-mitoqc" {
-        let cache = step.cache_path.as_ref().expect("checked is_some");
+    if let Some(cache) = step.cache_path.as_ref()
+        && supports_cache_arg(&step.tool)
+        && step.tool != "kira-mitoqc"
+    {
         args.push("--cache".to_string());
         args.push(
             absolutize_from_cwd(cache, cwd.as_deref())
@@ -1371,61 +1289,5 @@ fn maybe_sink_mito_profile_json(out_dir: &Path) -> Result<(), String> {
     {
         let _ = out_dir;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::build_tool_args;
-    use crate::run::plan::ToolStep;
-    use crate::run::tool::ToolInvocationMode;
-
-    fn step(tool: &str, out_dir: &str) -> ToolStep {
-        ToolStep {
-            tool: tool.to_string(),
-            input: PathBuf::from("/tmp/input"),
-            out_dir: PathBuf::from(out_dir),
-            threads: None,
-            cache_path: None,
-            mode: ToolInvocationMode::Unavailable,
-        }
-    }
-
-    #[test]
-    fn build_tool_args_riboqc_keeps_step_out() {
-        let step = step("kira-riboqc", "/tmp/out/kira-riboqc");
-        let args =
-            build_tool_args(&step, PathBuf::from("/tmp/bin/kira-riboqc").as_path()).expect("args");
-        let out_idx = args
-            .iter()
-            .position(|v| v == "--out")
-            .expect("out flag present");
-        assert_eq!(args[out_idx + 1], "/tmp/out/kira-riboqc");
-    }
-
-    #[test]
-    fn build_tool_args_riboqc_keeps_root_out_when_already_root() {
-        let step = step("kira-riboqc", "/tmp/out");
-        let args =
-            build_tool_args(&step, PathBuf::from("/tmp/bin/kira-riboqc").as_path()).expect("args");
-        let out_idx = args
-            .iter()
-            .position(|v| v == "--out")
-            .expect("out flag present");
-        assert_eq!(args[out_idx + 1], "/tmp/out");
-    }
-
-    #[test]
-    fn build_tool_args_non_riboqc_keeps_step_out() {
-        let step = step("kira-proteoqc", "/tmp/out/kira-proteoqc");
-        let args = build_tool_args(&step, PathBuf::from("/tmp/bin/kira-proteoqc").as_path())
-            .expect("args");
-        let out_idx = args
-            .iter()
-            .position(|v| v == "--out")
-            .expect("out flag present");
-        assert_eq!(args[out_idx + 1], "/tmp/out/kira-proteoqc");
     }
 }

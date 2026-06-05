@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Golden fixtures must stay byte-stable across platforms (no CRLF conversion).
+tests/fixtures/** -text

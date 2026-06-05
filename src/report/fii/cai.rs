@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -6,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::cli::ComputeCaiArgs;
 use crate::io;
+use crate::util::select::percentile_nearest_rank_in_place;
 use crate::util::tsv::TsvReader;
 
 use super::read::resolve_inputs;
@@ -30,13 +32,13 @@ impl Default for CaiConfig {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CaiRow {
-    sample_label: String,
-    order_rank: usize,
-    cai: f64,
-    skewness_component: f64,
-    tail_heaviness_component: f64,
-    tail_mass: f64,
+pub struct CaiRow {
+    pub sample_label: String,
+    pub order_rank: usize,
+    pub cai: f64,
+    pub skewness_component: f64,
+    pub tail_heaviness_component: f64,
+    pub tail_mass: f64,
 }
 
 pub fn run_compute_cai(args: &ComputeCaiArgs) -> Result<(), String> {
@@ -206,7 +208,7 @@ fn read_fii_values(path: &Path) -> Result<Vec<f64>, String> {
     Ok(values)
 }
 
-fn compute_cai(
+pub fn compute_cai(
     sample_label: &str,
     order_rank: usize,
     values: &[f64],
@@ -226,15 +228,16 @@ fn compute_cai(
         };
     }
 
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.total_cmp(b));
-    let q25 = percentile(&sorted, 0.25);
-    let q50 = percentile(&sorted, 0.50);
-    let q75 = percentile(&sorted, 0.75);
-    let q95 = percentile(&sorted, 0.95);
+    let tail_mass =
+        values.iter().filter(|v| **v >= hard_threshold).count() as f64 / values.len() as f64;
+
+    let mut buf = values.to_vec();
+    let q25 = percentile_nearest_rank_in_place(&mut buf, 0.25).unwrap_or(0.0);
+    let q50 = percentile_nearest_rank_in_place(&mut buf, 0.50).unwrap_or(0.0);
+    let q75 = percentile_nearest_rank_in_place(&mut buf, 0.75).unwrap_or(0.0);
+    let q95 = percentile_nearest_rank_in_place(&mut buf, 0.95).unwrap_or(0.0);
     let iqr = (q75 - q25).max(0.0);
 
-    // Bowley skewness robustly captures right-tail asymmetry.
     let skew = if iqr > 1e-12 {
         ((q75 + q25 - 2.0 * q50) / iqr).max(0.0)
     } else {
@@ -242,7 +245,6 @@ fn compute_cai(
     };
     let skew_norm = skew.clamp(0.0, 1.0);
 
-    // Tail-heaviness proxy from upper-spread / IQR.
     let upper_spread = (q95 - q75).max(0.0);
     let ratio = if iqr > 1e-12 {
         upper_spread / iqr
@@ -253,9 +255,6 @@ fn compute_cai(
     };
     let tail_heavy_norm = (ratio / (ratio + 1.0)).clamp(0.0, 1.0);
 
-    let tail_mass =
-        sorted.iter().filter(|v| **v >= hard_threshold).count() as f64 / sorted.len() as f64;
-    // Small non-zero resistant tail indicates subpopulation commitment.
     let tail_mass_norm = if tail_mass > 0.0 {
         (1.0 - tail_mass).clamp(0.0, 1.0)
     } else {
@@ -275,102 +274,22 @@ fn compute_cai(
     }
 }
 
-fn percentile(sorted: &[f64], q: f64) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    let q = q.clamp(0.0, 1.0);
-    let n = sorted.len();
-    let rank = if q <= 0.0 {
-        1usize
-    } else if q >= 1.0 {
-        n
-    } else {
-        (q * n as f64).ceil() as usize
-    };
-    sorted[rank.saturating_sub(1).min(n - 1)]
-}
-
 fn render_tsv(rows: &[CaiRow]) -> String {
-    let mut out = String::from(
+    let mut out = String::with_capacity(rows.len() * 96 + 128);
+    out.push_str(
         "sample_label\torder_rank\tCAI\tskewness_component\ttail_heaviness_component\ttail_mass\n",
     );
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}",
             r.sample_label,
             r.order_rank,
             r.cai,
             r.skewness_component,
             r.tail_heaviness_component,
             r.tail_mass
-        ));
+        );
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn linspace(n: usize, start: f64, end: f64) -> Vec<f64> {
-        if n <= 1 {
-            return vec![start];
-        }
-        (0..n)
-            .map(|i| start + (end - start) * (i as f64 / (n as f64 - 1.0)))
-            .collect()
-    }
-
-    #[test]
-    fn synthetic_distributions_show_expected_ordering() {
-        let uniform = linspace(1000, 0.2, 0.8);
-        let mut skewed = vec![0.05; 900];
-        skewed.extend(vec![0.95; 100]);
-        let mut bimodal = vec![0.15; 500];
-        bimodal.extend(vec![0.85; 500]);
-
-        let a = compute_cai("u", 0, &uniform, 0.66, 0.33, 0.33, 0.34);
-        let b = compute_cai("s", 1, &skewed, 0.66, 0.33, 0.33, 0.34);
-        let c = compute_cai("b", 2, &bimodal, 0.66, 0.33, 0.33, 0.34);
-
-        assert!(b.cai > a.cai);
-        assert!(b.cai > c.cai || c.cai > a.cai);
-    }
-
-    #[test]
-    fn sensitive_to_small_hard_tail() {
-        let diffuse = vec![0.55; 1000];
-        let mut small_tail = vec![0.55; 980];
-        small_tail.extend(vec![0.95; 20]);
-
-        let a = compute_cai("d", 0, &diffuse, 0.66, 0.33, 0.33, 0.34);
-        let b = compute_cai("t", 1, &small_tail, 0.66, 0.33, 0.33, 0.34);
-        assert!(b.cai > a.cai);
-    }
-
-    #[test]
-    fn stable_under_count_scaling() {
-        let base = vec![0.2, 0.2, 0.3, 0.4, 0.9];
-        let mut scaled = Vec::new();
-        for _ in 0..200 {
-            scaled.extend(base.iter().copied());
-        }
-        let a = compute_cai("a", 0, &base, 0.66, 0.33, 0.33, 0.34);
-        let b = compute_cai("b", 1, &scaled, 0.66, 0.33, 0.33, 0.34);
-        assert!((a.cai - b.cai).abs() < 1e-9);
-    }
-
-    #[test]
-    fn deterministic_across_runs() {
-        let mut values = vec![0.1; 700];
-        values.extend(vec![0.95; 40]);
-        values.extend(vec![0.5; 260]);
-        let a = compute_cai("x", 0, &values, 0.66, 0.33, 0.33, 0.34);
-        let b = compute_cai("x", 0, &values, 0.66, 0.33, 0.33, 0.34);
-        assert!((a.cai - b.cai).abs() < 1e-12);
-        assert!((a.skewness_component - b.skewness_component).abs() < 1e-12);
-        assert!((a.tail_heaviness_component - b.tail_heaviness_component).abs() < 1e-12);
-        assert!((a.tail_mass - b.tail_mass).abs() < 1e-12);
-    }
 }

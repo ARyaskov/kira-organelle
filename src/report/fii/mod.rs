@@ -1,14 +1,14 @@
 mod assets;
-mod binning;
-mod cai;
-mod cocs;
-mod dci;
+pub mod binning;
+pub mod cai;
+pub mod cocs;
+pub mod dci;
 mod decision;
 mod decision_timeline;
 mod dynamics;
-mod ili;
+pub mod ili;
 mod phase;
-mod pri;
+pub mod pri;
 mod read;
 mod render;
 

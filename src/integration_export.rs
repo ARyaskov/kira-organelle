@@ -152,20 +152,20 @@ pub fn write_multi_integration_artifacts(
 }
 
 #[derive(Debug, Clone)]
-struct OrderedExperiment {
-    name: String,
-    out_dir: PathBuf,
-    order_rank: usize,
-    timepoint: Option<usize>,
+pub struct OrderedExperiment {
+    pub name: String,
+    pub out_dir: PathBuf,
+    pub order_rank: usize,
+    pub timepoint: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
-struct ManifestOrder {
-    order_rank: usize,
-    timepoint: Option<usize>,
+pub struct ManifestOrder {
+    pub order_rank: usize,
+    pub timepoint: Option<usize>,
 }
 
-fn order_experiments(
+pub fn order_experiments(
     experiments: &[(String, PathBuf)],
     manifest: Option<&Path>,
 ) -> Result<Vec<OrderedExperiment>, String> {
@@ -265,7 +265,7 @@ fn parse_manifest_json(raw: &str) -> Result<BTreeMap<String, ManifestOrder>, Str
     Ok(out)
 }
 
-fn parse_manifest_delimited(
+pub fn parse_manifest_delimited(
     raw: &str,
     delim: char,
 ) -> Result<BTreeMap<String, ManifestOrder>, String> {
@@ -440,12 +440,7 @@ fn build_landscape_html(
         .map(|e| json!({"from": e.from, "to": e.to, "weight": e.weight}))
         .collect::<Vec<_>>();
 
-    let matrix_regimes = systems_export
-        .state_transition_matrix
-        .regimes
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    let matrix_regimes = systems_export.state_transition_matrix.regimes.to_vec();
     let matrix_values = systems_export
         .state_transition_matrix
         .matrix
@@ -1391,39 +1386,5 @@ fn cluster_key_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     match (a.parse::<i64>(), b.parse::<i64>()) {
         (Ok(ia), Ok(ib)) => ia.cmp(&ib).then(a.cmp(b)),
         _ => a.cmp(b),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn manifest_tsv_order_is_applied() {
-        let raw = "path\torder\ttimepoint\nB\t1\t10\nA\t0\t5\n";
-        let parsed = parse_manifest_delimited(raw, '\t').expect("manifest parse");
-        let a = parsed.get("A").expect("A");
-        let b = parsed.get("B").expect("B");
-        assert_eq!(a.order_rank, 0);
-        assert_eq!(a.timepoint, Some(5));
-        assert_eq!(b.order_rank, 1);
-        assert_eq!(b.timepoint, Some(10));
-    }
-
-    #[test]
-    fn order_falls_back_to_input_for_missing_manifest_entries() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let manifest = dir.path().join("manifest.tsv");
-        std::fs::write(&manifest, "label\torder\nB\t0\n").expect("manifest write");
-
-        let exps = vec![
-            ("A".to_string(), dir.path().join("out-a")),
-            ("B".to_string(), dir.path().join("out-b")),
-        ];
-        let ordered = order_experiments(&exps, Some(&manifest)).expect("order");
-        assert_eq!(ordered[0].name, "B");
-        assert_eq!(ordered[0].timepoint, Some(0));
-        assert_eq!(ordered[1].name, "A");
-        assert_eq!(ordered[1].timepoint, None);
     }
 }

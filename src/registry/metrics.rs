@@ -467,14 +467,13 @@ pub fn find_metric_spec(tool: ToolId, column_name: &str) -> Option<&'static Metr
     if exact.is_some() {
         return exact;
     }
-    let lower = column_name.to_ascii_lowercase();
     METRIC_SPECS.iter().find(|spec| {
         if spec.source_tool != tool {
             return false;
         }
         spec.accepted_aliases
             .iter()
-            .any(|alias| lower.eq_ignore_ascii_case(alias))
+            .any(|alias| column_name.eq_ignore_ascii_case(alias))
     })
 }
 
@@ -487,24 +486,4 @@ pub fn expected_metrics_for_tool(tool: ToolId) -> Vec<&'static MetricSpec> {
 
 pub fn metric_spec_by_id(id: MetricId) -> &'static MetricSpec {
     &METRIC_SPECS[id.as_index()]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{MetricId, ToolId, find_metric_spec, metric_spec_by_id};
-
-    #[test]
-    fn canonical_order_and_count_are_stable() {
-        assert_eq!(MetricId::COUNT, 42);
-        assert_eq!(metric_spec_by_id(MetricId::Rss).canonical_name, "RSS");
-        assert_eq!(metric_spec_by_id(MetricId::Msm).canonical_name, "MSM");
-    }
-
-    #[test]
-    fn alias_lookup_is_supported() {
-        let spec = find_metric_spec(ToolId::RiboQc, "translation_stress_index").expect("alias");
-        assert_eq!(spec.canonical_name, "TSM");
-        let exact = find_metric_spec(ToolId::RiboQc, "mTOR_P").expect("exact");
-        assert_eq!(exact.canonical_name, "mTOR_P");
-    }
 }

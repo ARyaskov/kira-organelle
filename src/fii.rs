@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cells::types::CellState;
-use crate::cells::types::CellsState;
+use crate::cells::types::{CellState, CellsState};
 use crate::model::organelle::OrganelleId;
+use crate::util::select::{median_in_place, percentile_nearest_rank_in_place};
 
 const ADAPTIVE_THRESHOLD: f64 = 0.33;
 const RESISTANT_THRESHOLD: f64 = 0.66;
@@ -192,15 +193,25 @@ pub fn compute_fii(cells: &CellsState, weights: FiiWeights) -> Result<FiiComputa
     }
 
     let n = rows.len() as f64;
-    let distribution = FiiDistributionSummary {
-        mean: if n > 0.0 {
-            values.iter().sum::<f64>() / n
-        } else {
-            0.0
-        },
-        median: percentile(&values, 0.50),
-        p25: percentile(&values, 0.25),
-        p75: percentile(&values, 0.75),
+    let distribution = if values.is_empty() {
+        FiiDistributionSummary {
+            mean: 0.0,
+            median: 0.0,
+            p25: 0.0,
+            p75: 0.0,
+        }
+    } else {
+        let mean = values.iter().sum::<f64>() / n;
+        let mut buf = values.clone();
+        let median = median_in_place(&mut buf).unwrap_or(0.0);
+        let p25 = percentile_nearest_rank_in_place(&mut buf, 0.25).unwrap_or(0.0);
+        let p75 = percentile_nearest_rank_in_place(&mut buf, 0.75).unwrap_or(0.0);
+        FiiDistributionSummary {
+            mean,
+            median,
+            p25,
+            p75,
+        }
     };
 
     let mut regime_fractions = BTreeMap::new();
@@ -225,7 +236,8 @@ pub fn compute_fii(cells: &CellsState, weights: FiiWeights) -> Result<FiiComputa
 }
 
 pub fn render_fii_tsv(rows: &[FiiCellRow]) -> String {
-    let mut out = String::from(
+    let mut out = String::with_capacity(rows.len() * 96 + 256);
+    out.push_str(
         "cell_id\tmitochondrial_stress_adaptation_score\ttranslation_commitment_score\tsplice_irreversibility_index\tfunctional_irreversibility_index\tfii_regime\tfii_low_confidence\n",
     );
     for row in rows {
@@ -237,7 +249,7 @@ pub fn render_fii_tsv(rows: &[FiiCellRow]) -> String {
         out.push('\t');
         write_opt_float(&mut out, row.splice_irreversibility_index);
         out.push('\t');
-        out.push_str(&format!("{:.6}", row.functional_irreversibility_index));
+        let _ = write!(&mut out, "{:.6}", row.functional_irreversibility_index);
         out.push('\t');
         out.push_str(row.fii_regime.as_str());
         out.push('\t');
@@ -273,47 +285,8 @@ fn clamp01(v: f64) -> f64 {
     v.clamp(0.0, 1.0)
 }
 
-fn percentile(values: &[f64], q: f64) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.total_cmp(b));
-    let rank = ((sorted.len() - 1) as f64 * q).round() as usize;
-    sorted[rank]
-}
-
 fn write_opt_float(out: &mut String, value: Option<f64>) {
     if let Some(v) = value {
-        out.push_str(&format!("{:.6}", v));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{FiiRegime, FiiWeights, classify_regime};
-
-    #[test]
-    fn parse_weights() {
-        let w = FiiWeights::parse("mito:0.34,translation:0.33,splice:0.33").expect("parse");
-        assert!((w.mitochondrial - 0.34).abs() < 1e-9);
-        assert!((w.translation - 0.33).abs() < 1e-9);
-        assert!((w.splice - 0.33).abs() < 1e-9);
-    }
-
-    #[test]
-    fn reject_bad_weight_sum() {
-        let err = FiiWeights::parse("mito:0.5,translation:0.5,splice:0.5").expect_err("err");
-        assert!(err.contains("sum"));
-    }
-
-    #[test]
-    fn regime_boundaries() {
-        assert_eq!(classify_regime(0.0), FiiRegime::Adaptive);
-        assert_eq!(classify_regime(0.329999), FiiRegime::Adaptive);
-        assert_eq!(classify_regime(0.33), FiiRegime::Transition);
-        assert_eq!(classify_regime(0.659999), FiiRegime::Transition);
-        assert_eq!(classify_regime(0.66), FiiRegime::Resistant);
-        assert_eq!(classify_regime(1.0), FiiRegime::Resistant);
+        let _ = write!(out, "{v:.6}");
     }
 }

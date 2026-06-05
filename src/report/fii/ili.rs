@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -7,9 +8,9 @@ use crate::cli::ComputeIliArgs;
 use crate::io;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct IliConfig {
-    min_signal_threshold: f64,
-    tie_epsilon: f64,
+pub struct IliConfig {
+    pub min_signal_threshold: f64,
+    pub tie_epsilon: f64,
 }
 
 impl Default for IliConfig {
@@ -22,23 +23,23 @@ impl Default for IliConfig {
 }
 
 #[derive(Debug, Clone)]
-struct SampleRow {
-    sample_label: String,
-    order_rank: usize,
-    nucleus: Option<f64>,
-    splice: Option<f64>,
-    proteostasis: Option<f64>,
-    mito: Option<f64>,
-    tme: Option<f64>,
+pub struct SampleRow {
+    pub sample_label: String,
+    pub order_rank: usize,
+    pub nucleus: Option<f64>,
+    pub splice: Option<f64>,
+    pub proteostasis: Option<f64>,
+    pub mito: Option<f64>,
+    pub tme: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct IliRow {
-    order_rank: usize,
-    sample_label: String,
-    ili_category: String,
-    ili_confidence: f64,
-    leading_deltafii_value: f64,
+pub struct IliRow {
+    pub order_rank: usize,
+    pub sample_label: String,
+    pub ili_category: String,
+    pub ili_confidence: f64,
+    pub leading_deltafii_value: f64,
 }
 
 pub fn run_compute_ili(args: &ComputeIliArgs) -> Result<(), String> {
@@ -161,7 +162,7 @@ fn validate_order(samples: &[SampleRow]) -> Result<(), String> {
     Ok(())
 }
 
-fn compute_transition(prev: &SampleRow, curr: &SampleRow, cfg: &IliConfig) -> IliRow {
+pub fn compute_transition(prev: &SampleRow, curr: &SampleRow, cfg: &IliConfig) -> IliRow {
     let delta_order = (curr.order_rank as f64 - prev.order_rank as f64).max(1.0);
     let mut deltas = Vec::<(&str, f64)>::new();
     for (name, a, b) in [
@@ -226,147 +227,18 @@ fn compute_transition(prev: &SampleRow, curr: &SampleRow, cfg: &IliConfig) -> Il
 }
 
 fn render_tsv(rows: &[IliRow]) -> String {
-    let mut out = String::from(
-        "order_rank\tsample_label\tILI_category\tILI_confidence\tleading_ΔFII_value\n",
-    );
+    let mut out = String::with_capacity(rows.len() * 80 + 96);
+    out.push_str("order_rank\tsample_label\tILI_category\tILI_confidence\tleading_ΔFII_value\n");
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{:.6}\t{:.6}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{}\t{:.6}\t{:.6}",
             r.order_rank,
             r.sample_label,
             r.ili_category,
             r.ili_confidence,
             r.leading_deltafii_value
-        ));
+        );
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample(
-        label: &str,
-        rank: usize,
-        nucleus: Option<f64>,
-        splice: Option<f64>,
-        proteostasis: Option<f64>,
-        mito: Option<f64>,
-        tme: Option<f64>,
-    ) -> SampleRow {
-        SampleRow {
-            sample_label: label.to_string(),
-            order_rank: rank,
-            nucleus,
-            splice,
-            proteostasis,
-            mito,
-            tme,
-        }
-    }
-
-    #[test]
-    fn ili_picks_known_leading_organelle() {
-        let cfg = IliConfig::default();
-        let prev = sample(
-            "baseline",
-            0,
-            Some(0.20),
-            Some(0.20),
-            Some(0.20),
-            Some(0.20),
-            Some(0.20),
-        );
-        let curr = sample(
-            "step1",
-            1,
-            Some(0.21),
-            Some(0.48),
-            Some(0.23),
-            Some(0.22),
-            Some(0.20),
-        );
-        let row = compute_transition(&prev, &curr, &cfg);
-        assert_eq!(row.ili_category, "SPLICE_DRIVEN");
-        assert!(row.ili_confidence > 0.5);
-    }
-
-    #[test]
-    fn ili_tie_and_low_signal_resolve_to_unresolved() {
-        let mut cfg = IliConfig::default();
-        cfg.tie_epsilon = 1e-5;
-        cfg.min_signal_threshold = 0.02;
-        let prev = sample(
-            "baseline",
-            0,
-            Some(0.10),
-            Some(0.10),
-            Some(0.10),
-            Some(0.10),
-            Some(0.10),
-        );
-        let tie_curr = sample(
-            "tie",
-            1,
-            Some(0.30),
-            Some(0.30),
-            Some(0.10),
-            Some(0.10),
-            Some(0.10),
-        );
-        let tie_row = compute_transition(&prev, &tie_curr, &cfg);
-        assert_eq!(tie_row.ili_category, "UNRESOLVED");
-
-        let low_curr = sample(
-            "low",
-            1,
-            Some(0.105),
-            Some(0.103),
-            Some(0.102),
-            Some(0.101),
-            Some(0.100),
-        );
-        let low_row = compute_transition(&prev, &low_curr, &cfg);
-        assert_eq!(low_row.ili_category, "UNRESOLVED");
-    }
-
-    #[test]
-    fn ili_skips_missing_components_and_still_computes() {
-        let cfg = IliConfig::default();
-        let prev = sample("baseline", 0, None, Some(0.15), None, Some(0.10), None);
-        let curr = sample("step1", 1, None, Some(0.22), None, Some(0.12), None);
-        let row = compute_transition(&prev, &curr, &cfg);
-        assert_eq!(row.ili_category, "SPLICE_DRIVEN");
-        assert!(row.leading_deltafii_value > 0.0);
-    }
-
-    #[test]
-    fn ili_transition_deterministic() {
-        let cfg = IliConfig::default();
-        let prev = sample(
-            "baseline",
-            0,
-            Some(0.20),
-            Some(0.20),
-            Some(0.20),
-            Some(0.20),
-            Some(0.20),
-        );
-        let curr = sample(
-            "step1",
-            2,
-            Some(0.24),
-            Some(0.42),
-            Some(0.23),
-            Some(0.28),
-            Some(0.21),
-        );
-        let a = compute_transition(&prev, &curr, &cfg);
-        let b = compute_transition(&prev, &curr, &cfg);
-        assert_eq!(a.ili_category, b.ili_category);
-        assert_eq!(a.order_rank, b.order_rank);
-        assert!((a.ili_confidence - b.ili_confidence).abs() < 1e-12);
-        assert!((a.leading_deltafii_value - b.leading_deltafii_value).abs() < 1e-12);
-    }
 }

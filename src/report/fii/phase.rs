@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -719,21 +720,24 @@ fn build_flags(points: &[PhasePoint], cfg: &PhaseConfig) -> Vec<FlagRow> {
 }
 
 fn render_points_tsv(points: &[PhasePoint]) -> String {
-    let mut out = String::from(
+    let mut out = String::with_capacity(points.len() * 96 + 160);
+    out.push_str(
         "sample_label\torder_rank\tfii_mean\tfii_median\tfii_velocity\tfii_acceleration\tresistant_fraction\tlow_confidence_fraction\n",
     );
     for p in points {
-        out.push_str(&format!(
-            "{}\t{}\t{:.6}\t{:.6}\t{}\t{}\t{:.6}\t{:.6}\n",
-            p.sample_label,
-            p.order_rank,
-            p.fii_mean,
-            p.fii_median,
-            opt6(p.fii_velocity),
-            opt6(p.fii_acceleration),
-            p.resistant_fraction,
-            p.low_confidence_fraction
-        ));
+        let _ = write!(
+            &mut out,
+            "{}\t{}\t{:.6}\t{:.6}\t",
+            p.sample_label, p.order_rank, p.fii_mean, p.fii_median
+        );
+        write_opt6(&mut out, p.fii_velocity);
+        out.push('\t');
+        write_opt6(&mut out, p.fii_acceleration);
+        let _ = writeln!(
+            &mut out,
+            "\t{:.6}\t{:.6}",
+            p.resistant_fraction, p.low_confidence_fraction
+        );
     }
     out
 }
@@ -747,12 +751,14 @@ fn render_bins_tsv(rows: &[BinRow]) -> String {
             .then(a.bin_x.cmp(&b.bin_x))
             .then(a.bin_y.cmp(&b.bin_y))
     });
-    let mut out = String::from(
+    let mut out = String::with_capacity(sorted.len() * 96 + 160);
+    out.push_str(
         "projection\tsample_label\tbin_x\tbin_y\tcount\tfrac_adaptive\tfrac_transition\tfrac_resistant\tfrac_low_confidence\n",
     );
     for r in sorted {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}",
             r.projection,
             r.sample_label,
             r.bin_x,
@@ -762,22 +768,26 @@ fn render_bins_tsv(rows: &[BinRow]) -> String {
             r.frac_transition,
             r.frac_resistant,
             r.frac_low_confidence
-        ));
+        );
     }
     out
 }
 
 fn render_flags_tsv(rows: &[FlagRow]) -> String {
-    let mut out = String::from("sample_label\torder_rank\tflag\tmetric\tvalue\tthreshold\tnote\n");
+    let mut out = String::with_capacity(rows.len() * 80 + 96);
+    out.push_str("sample_label\torder_rank\tflag\tmetric\tvalue\tthreshold\tnote\n");
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{}\t{}\t{:.6}\t{:.6}\t{}",
             r.sample_label, r.order_rank, r.flag, r.metric, r.value, r.threshold, r.note
-        ));
+        );
     }
     out
 }
 
-fn opt6(v: Option<f64>) -> String {
-    v.map(|x| format!("{x:.6}")).unwrap_or_default()
+fn write_opt6(out: &mut String, v: Option<f64>) {
+    if let Some(x) = v {
+        let _ = write!(out, "{x:.6}");
+    }
 }

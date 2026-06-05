@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -7,9 +8,9 @@ use crate::cli::ComputeDciArgs;
 use crate::io;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct DciConfig {
-    low_threshold: f64,
-    high_threshold: f64,
+pub struct DciConfig {
+    pub low_threshold: f64,
+    pub high_threshold: f64,
 }
 
 impl Default for DciConfig {
@@ -22,23 +23,23 @@ impl Default for DciConfig {
 }
 
 #[derive(Debug, Clone)]
-struct Sample {
-    sample_label: String,
-    order_rank: usize,
-    nucleus: Option<f64>,
-    splice: Option<f64>,
-    proteostasis: Option<f64>,
-    mito: Option<f64>,
-    tme: Option<f64>,
+pub struct Sample {
+    pub sample_label: String,
+    pub order_rank: usize,
+    pub nucleus: Option<f64>,
+    pub splice: Option<f64>,
+    pub proteostasis: Option<f64>,
+    pub mito: Option<f64>,
+    pub tme: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct DciRow {
-    sample_label: String,
-    order_rank: usize,
-    dci: f64,
-    dci_core: f64,
-    dci_extended: f64,
+pub struct DciRow {
+    pub sample_label: String,
+    pub order_rank: usize,
+    pub dci: f64,
+    pub dci_core: f64,
+    pub dci_extended: f64,
 }
 
 pub fn run_compute_dci(args: &ComputeDciArgs) -> Result<(), String> {
@@ -158,7 +159,7 @@ fn vote(v: Option<f64>, cfg: &DciConfig) -> Option<i32> {
     }
 }
 
-fn compute_row(sample: &Sample, cfg: &DciConfig) -> DciRow {
+pub fn compute_row(sample: &Sample, cfg: &DciConfig) -> DciRow {
     let mut all_votes = Vec::new();
     let mut core_votes = Vec::new();
     let nucleus = vote(sample.nucleus, cfg);
@@ -209,99 +210,14 @@ fn pairwise_mean_agreement(votes: &[i32]) -> f64 {
 }
 
 fn render_tsv(rows: &[DciRow]) -> String {
-    let mut out = String::from("sample_label\torder_rank\tDCI\tDCI_core\tDCI_extended\n");
+    let mut out = String::with_capacity(rows.len() * 64 + 64);
+    out.push_str("sample_label\torder_rank\tDCI\tDCI_core\tDCI_extended\n");
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{:.6}\t{:.6}\t{:.6}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{:.6}\t{:.6}\t{:.6}",
             r.sample_label, r.order_rank, r.dci, r.dci_core, r.dci_extended
-        ));
+        );
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fully_concordant_is_high() {
-        let cfg = DciConfig::default();
-        let s = Sample {
-            sample_label: "x".to_string(),
-            order_rank: 0,
-            nucleus: Some(0.9),
-            splice: Some(0.91),
-            proteostasis: Some(0.95),
-            mito: Some(0.88),
-            tme: Some(0.9),
-        };
-        let row = compute_row(&s, &cfg);
-        assert!((row.dci - 1.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn fully_conflicting_is_low() {
-        let cfg = DciConfig::default();
-        let s = Sample {
-            sample_label: "x".to_string(),
-            order_rank: 0,
-            nucleus: Some(0.1),
-            splice: Some(0.9),
-            proteostasis: Some(0.1),
-            mito: Some(0.9),
-            tme: Some(0.1),
-        };
-        let row = compute_row(&s, &cfg);
-        assert!(row.dci < 0.5);
-    }
-
-    #[test]
-    fn mixed_partial_is_mid() {
-        let cfg = DciConfig::default();
-        let s = Sample {
-            sample_label: "x".to_string(),
-            order_rank: 0,
-            nucleus: Some(0.2),
-            splice: Some(0.5),
-            proteostasis: Some(0.8),
-            mito: Some(0.5),
-            tme: Some(0.2),
-        };
-        let row = compute_row(&s, &cfg);
-        assert!(row.dci > 0.2 && row.dci < 0.9);
-    }
-
-    #[test]
-    fn missing_is_robust() {
-        let cfg = DciConfig::default();
-        let s = Sample {
-            sample_label: "x".to_string(),
-            order_rank: 0,
-            nucleus: Some(0.2),
-            splice: None,
-            proteostasis: Some(0.8),
-            mito: None,
-            tme: Some(0.2),
-        };
-        let row = compute_row(&s, &cfg);
-        assert!((0.0..=1.0).contains(&row.dci));
-    }
-
-    #[test]
-    fn deterministic() {
-        let cfg = DciConfig::default();
-        let s = Sample {
-            sample_label: "x".to_string(),
-            order_rank: 0,
-            nucleus: Some(0.2),
-            splice: Some(0.5),
-            proteostasis: Some(0.8),
-            mito: Some(0.4),
-            tme: Some(0.9),
-        };
-        let a = compute_row(&s, &cfg);
-        let b = compute_row(&s, &cfg);
-        assert!((a.dci - b.dci).abs() < 1e-12);
-        assert!((a.dci_core - b.dci_core).abs() < 1e-12);
-    }
 }

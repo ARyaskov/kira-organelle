@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -10,10 +11,10 @@ use crate::io;
 use super::read::{SampleInput, resolve_inputs};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PriConfig {
-    w_nuclear: f64,
-    w_splice: f64,
-    w_translation: f64,
+pub struct PriConfig {
+    pub w_nuclear: f64,
+    pub w_splice: f64,
+    pub w_translation: f64,
 }
 
 impl Default for PriConfig {
@@ -27,14 +28,14 @@ impl Default for PriConfig {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct PriRow {
-    sample_label: String,
-    order_rank: usize,
-    pri: f64,
-    nuclear_plasticity_component: f64,
-    splicing_integrity_component: f64,
-    translational_selectivity_component: f64,
-    low_confidence: bool,
+pub struct PriRow {
+    pub sample_label: String,
+    pub order_rank: usize,
+    pub pri: f64,
+    pub nuclear_plasticity_component: f64,
+    pub splicing_integrity_component: f64,
+    pub translational_selectivity_component: f64,
+    pub low_confidence: bool,
 }
 
 pub fn run_compute_pri(args: &ComputePriArgs) -> Result<(), String> {
@@ -246,7 +247,7 @@ fn apply_weight_spec(cfg: &mut PriConfig, spec: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn normalize_weights(cfg: &mut PriConfig) -> Result<(), String> {
+pub fn normalize_weights(cfg: &mut PriConfig) -> Result<(), String> {
     let sum = cfg.w_nuclear + cfg.w_splice + cfg.w_translation;
     if !sum.is_finite() || sum <= 0.0 {
         return Err("INVALID PRI weights: sum must be > 0".to_string());
@@ -258,82 +259,21 @@ fn normalize_weights(cfg: &mut PriConfig) -> Result<(), String> {
 }
 
 fn render_tsv(rows: &[PriRow]) -> String {
-    let mut out = String::from(
+    let mut out = String::with_capacity(rows.len() * 96 + 160);
+    out.push_str(
         "sample_label\torder_rank\tPRI\tnuclear_plasticity_component\tsplicing_integrity_component\ttranslational_selectivity_component\n",
     );
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\n",
+        let _ = writeln!(
+            &mut out,
+            "{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}",
             r.sample_label,
             r.order_rank,
             r.pri,
             r.nuclear_plasticity_component,
             r.splicing_integrity_component,
             r.translational_selectivity_component
-        ));
+        );
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample(label: &str, order: usize) -> SampleInput {
-        SampleInput {
-            root: std::path::PathBuf::from(format!("/tmp/{label}")),
-            label: label.to_string(),
-            order,
-            timepoint: None,
-        }
-    }
-
-    #[test]
-    fn synthetic_component_combinations() {
-        let cfg = PriConfig::default();
-        let a = PriRow {
-            sample_label: "a".to_string(),
-            order_rank: 0,
-            pri: 0.0,
-            nuclear_plasticity_component: 1.0,
-            splicing_integrity_component: 1.0,
-            translational_selectivity_component: 1.0,
-            low_confidence: false,
-        };
-        let b = PriRow {
-            sample_label: "b".to_string(),
-            order_rank: 1,
-            pri: 0.0,
-            nuclear_plasticity_component: 0.1,
-            splicing_integrity_component: 0.2,
-            translational_selectivity_component: 0.1,
-            low_confidence: false,
-        };
-        let pa = (cfg.w_nuclear * a.nuclear_plasticity_component
-            + cfg.w_splice * a.splicing_integrity_component
-            + cfg.w_translation * a.translational_selectivity_component)
-            .clamp(0.0, 1.0);
-        let pb = (cfg.w_nuclear * b.nuclear_plasticity_component
-            + cfg.w_splice * b.splicing_integrity_component
-            + cfg.w_translation * b.translational_selectivity_component)
-            .clamp(0.0, 1.0);
-        assert!(pa > pb);
-    }
-
-    #[test]
-    fn weight_normalization_and_ordering_deterministic() {
-        let mut cfg = PriConfig {
-            w_nuclear: 4.0,
-            w_splice: 3.0,
-            w_translation: 3.0,
-        };
-        normalize_weights(&mut cfg).expect("normalize");
-        assert!((cfg.w_nuclear + cfg.w_splice + cfg.w_translation - 1.0).abs() < 1e-12);
-
-        let mut specs = [sample("b", 2), sample("a", 1), sample("c", 2)];
-        specs.sort_by(|x, y| x.order.cmp(&y.order).then(x.label.cmp(&y.label)));
-        assert_eq!(specs[0].label, "a");
-        assert_eq!(specs[1].label, "b");
-        assert_eq!(specs[2].label, "c");
-    }
 }

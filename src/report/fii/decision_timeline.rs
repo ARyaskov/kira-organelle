@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::Serialize;
@@ -340,46 +341,55 @@ fn tier_rank(tier: &str) -> i32 {
 }
 
 fn render_timeline_tsv(rows: &[TimelineRow]) -> String {
-    let mut out = String::from(
+    let mut out = String::with_capacity(rows.len() * 128 + 256);
+    out.push_str(
         "order_rank\tsample_label\tdecision_tier\tconfidence_score\tcai_context\tpri_context\tcocs_context\tdci_context\n",
     );
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{:.6}\t{}\t{}\t{}\t{}\n",
-            r.order_rank,
-            r.sample_label,
-            r.decision_tier,
-            r.confidence_score,
-            r.cai_context.map(|v| format!("{v:.6}")).unwrap_or_default(),
-            r.pri_context.map(|v| format!("{v:.6}")).unwrap_or_default(),
-            r.cocs_context
-                .map(|v| format!("{v:.6}"))
-                .unwrap_or_default(),
-            r.dci_context.map(|v| format!("{v:.6}")).unwrap_or_default()
-        ));
+        let _ = write!(
+            &mut out,
+            "{}\t{}\t{}\t{:.6}\t",
+            r.order_rank, r.sample_label, r.decision_tier, r.confidence_score
+        );
+        write_opt6(&mut out, r.cai_context);
+        out.push('\t');
+        write_opt6(&mut out, r.pri_context);
+        out.push('\t');
+        write_opt6(&mut out, r.cocs_context);
+        out.push('\t');
+        write_opt6(&mut out, r.dci_context);
+        out.push('\n');
     }
     out
 }
 
 fn render_stability_tsv(m: &Metrics) -> String {
-    let mut out = String::from("metric\tvalue\n");
-    out.push_str(&format!("flip_count\t{}\n", m.flip_count));
-    out.push_str(&format!("volatility\t{:.6}\n", m.volatility));
-    out.push_str(&format!("early_flip_index\t{:.6}\n", m.early_flip_index));
-    out.push_str(&format!("stability_score\t{:.6}\n", m.stability_score));
+    let mut out = String::with_capacity(512);
+    out.push_str("metric\tvalue\n");
+    let _ = writeln!(&mut out, "flip_count\t{}", m.flip_count);
+    let _ = writeln!(&mut out, "volatility\t{:.6}", m.volatility);
+    let _ = writeln!(&mut out, "early_flip_index\t{:.6}", m.early_flip_index);
+    let _ = writeln!(&mut out, "stability_score\t{:.6}", m.stability_score);
     for tier in [
         "STABLE_ADAPTIVE",
         "TRANSITION_RISK",
         "PRE_RESISTANT",
         "FIXED_RESISTANT",
     ] {
-        out.push_str(&format!(
-            "persistence_length_{}\t{}\n",
+        let _ = writeln!(
+            &mut out,
+            "persistence_length_{}\t{}",
             tier,
             m.persistence.get(tier).copied().unwrap_or(0)
-        ));
+        );
     }
     out
+}
+
+fn write_opt6(out: &mut String, value: Option<f64>) {
+    if let Some(v) = value {
+        let _ = write!(out, "{v:.6}");
+    }
 }
 
 fn build_json(timeline: &[TimelineRow], metrics: &Metrics) -> Value {

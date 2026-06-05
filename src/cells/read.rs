@@ -323,7 +323,9 @@ fn row_is_empty(reader: &TsvReader, fields: &[std::ops::Range<usize>]) -> bool {
 }
 
 fn stable_source_path(input_root: &Path, path: &Path) -> String {
-    path.strip_prefix(input_root)
+    let raw = path
+        .strip_prefix(input_root)
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string_lossy().to_string());
+    raw.replace('\\', "/")
 }

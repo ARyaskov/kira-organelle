@@ -1,3 +1,13 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::manual_map,
+    clippy::ptr_arg,
+    clippy::if_same_then_else,
+    clippy::while_let_on_iterator
+)]
+
 pub mod cells;
 pub mod cli;
 pub mod compare;
@@ -14,7 +24,6 @@ pub mod registry;
 pub mod render;
 pub mod report;
 pub mod run;
-pub mod simd;
 pub mod state;
 pub mod stress_localization;
 pub mod systems;

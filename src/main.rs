@@ -4,7 +4,6 @@ use kira_organelle::cli::{Cli, Commands};
 fn main() {
     let cli = Cli::parse();
     kira_organelle::logging::init(cli.log_level, cli.no_color);
-    kira_organelle::simd::log_simd_mode();
 
     match cli.command {
         Commands::Aggregate(args) => {

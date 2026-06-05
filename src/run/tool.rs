@@ -22,37 +22,57 @@ fn resolve_binary(tool: &str) -> Option<PathBuf> {
     );
     if let Some(v) = env::var_os(&env_key) {
         let p = PathBuf::from(v);
-        if is_executable_file(&p) {
-            return Some(p);
+        if let Some(resolved) = match_executable(&p) {
+            return Some(resolved);
         }
     }
 
     if let Ok(exe) = env::current_exe()
         && let Some(bin_dir) = exe.parent()
+        && let Some(resolved) = match_executable(&bin_dir.join(tool))
     {
-        let candidate = bin_dir.join(tool);
-        if is_executable_file(&candidate) {
-            return Some(candidate);
-        }
+        return Some(resolved);
     }
 
     if let Some(path) = find_in_path(tool) {
         return Some(path);
     }
 
-    if let Some(path) = find_in_neighbor_repo(tool) {
-        return Some(path);
-    }
-
-    None
+    find_in_neighbor_repo(tool)
 }
 
 fn find_in_path(tool: &str) -> Option<PathBuf> {
     let path_env = env::var_os("PATH")?;
     for dir in env::split_paths(&path_env) {
-        let candidate = dir.join(tool);
-        if is_executable_file(&candidate) {
-            return Some(candidate);
+        if let Some(resolved) = match_executable(&dir.join(tool)) {
+            return Some(resolved);
+        }
+    }
+    None
+}
+
+/// Resolve `path` to an existing executable file, retrying with the OS exe suffix
+/// (`.exe` on Windows, empty elsewhere). Returns the canonical match or `None`.
+fn match_executable(path: &Path) -> Option<PathBuf> {
+    if is_executable_file(path) {
+        return Some(path.to_path_buf());
+    }
+    let suffix = env::consts::EXE_SUFFIX;
+    if !suffix.is_empty() {
+        let already_has_suffix = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case(suffix.trim_start_matches('.')))
+            .unwrap_or(false);
+        if !already_has_suffix {
+            let candidate: PathBuf = {
+                let mut s = path.as_os_str().to_owned();
+                s.push(suffix);
+                PathBuf::from(s)
+            };
+            if is_executable_file(&candidate) {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -70,13 +90,14 @@ fn find_in_neighbor_repo(tool: &str) -> Option<PathBuf> {
 
     for root in roots {
         let repo_dir = root.join(tool);
-        let release = repo_dir.join("target").join("release").join(tool);
-        if is_executable_file(&release) {
-            return Some(release);
+        if let Some(resolved) =
+            match_executable(&repo_dir.join("target").join("release").join(tool))
+        {
+            return Some(resolved);
         }
-        let debug = repo_dir.join("target").join("debug").join(tool);
-        if is_executable_file(&debug) {
-            return Some(debug);
+        if let Some(resolved) = match_executable(&repo_dir.join("target").join("debug").join(tool))
+        {
+            return Some(resolved);
         }
     }
 
